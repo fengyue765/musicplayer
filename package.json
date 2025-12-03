@@ -1,0 +1,21 @@
+{
+  "name": "musicplayer-desktop",
+  "version": "1.0.0",
+  "description": "Local music player (Electron) — forked from web UI",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-packager . MusicPlayer --platform=darwin,win32,linux --arch=x64 --out=dist --overwrite"
+  },
+  "dependencies": {
+    "chokidar": "^3.5.3",
+    "electron-store": "^8.1.0"
+  },
+  "devDependencies": {
+    "electron": "^25.3.0",
+    "electron-packager": "^17.1.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
+}
