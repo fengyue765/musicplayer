@@ -13,6 +13,7 @@
   "build": {
     "appId": "com.fengyue.musicplayer",
     "productName": "MusicPlayer",
+    "icon": "build/icons",
     "files": [
       "**/*",
       "!node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}"
@@ -21,6 +22,7 @@
       "buildResources": "build"
     },
     "win": {
+      "icon": "build/icons/icon.ico",
       "target": [
         "nsis"
       ],
@@ -32,6 +34,7 @@
       "allowElevation": true
     },
     "linux": {
+      "icon": "build/icons/icon.png",
       "target": [
         "AppImage"
       ],
