@@ -1,0 +1,58 @@
+/* playlist header */
+.playlist-header{ display:flex; justify-content:space-between; align-items:center; margin-top:6px; gap:8px; }
+.playlist-title{ font-weight:700; color:var(--text); }
+.playlist-actions{ display:flex; gap:8px; align-items:center; }
+
+/* sort group */
+.sort-group{ display:flex; gap:8px; align-items:center; margin-right:6px; }
+.sort-select{ padding:6px 8px; border-radius:8px; border:1px solid rgba(220,210,230,0.45); background:#fff; font-weight:600; }
+.small-btn{
+  padding:6px 8px; border-radius:8px; border:none; cursor:pointer;
+  background:linear-gradient(180deg,#fff,#fff7fb); box-shadow: 0 6px 14px rgba(230,210,230,0.12);
+}
+
+/* playlist */
+.playlist{ border-top:1px solid rgba(220,210,230,0.35); max-height:320px; overflow:auto; padding-top:10px; margin-top:8px; transition:max-height .28s ease, opacity .2s ease; }
+.playlist.collapsed{ max-height:0; padding-top:0; margin-top:6px; opacity:0; pointer-events:none; }
+.item{
+  display:flex; justify-content:space-between; align-items:center; padding:10px; border-radius:10px; margin-bottom:8px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(249,244,250,0.6));
+  cursor:pointer; transition:transform .12s ease, box-shadow .12s ease, background .12s ease;
+  box-sizing: border-box;
+}
+.item:hover{ transform:translateY(-4px); box-shadow:0 10px 20px rgba(220,200,220,0.12); }
+
+/* 修复：不再使用 outline（会被父容器裁切），改为内部描边（inset）和轻微外阴影 */
+.item.active{
+  background: linear-gradient(180deg,#FFF8FB,#FFF5FC);
+  box-shadow: 0 8px 18px rgba(220,190,210,0.12), inset 0 0 0 2px rgba(236,210,235,0.95);
+  transform: translateY(-2px);
+  z-index: 1;
+}
+.filename{ font-size:0.98rem; color:var(--text); }
+
+/* stats area */
+.stats{ font-size:0.85rem; color:var(--muted); margin-left:12px; white-space:nowrap; }
+
+/* highlight animation when locating */
+.locate-highlight {
+  box-shadow: 0 8px 30px rgba(255,200,220,0.45);
+  transform: translateY(-4px);
+  animation: highlightFade 2s ease forwards;
+}
+@keyframes highlightFade {
+  0% { background: linear-gradient(90deg,#FFF4F9,#FFF0FB); }
+  60% { background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(255,247,250,0.9)); }
+  100% { background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(249,244,250,0.6)); transform: none; box-shadow:none; }
+}
+
+/* dirStatus (操作日志) */
+#dirStatus{ color:var(--muted); font-size:0.9rem; margin-top:12px; }
+
+/* responsiveness */
+@media (max-width:560px){
+  .controls-row{ gap:8px; }
+  .toggle-group{ margin-left:unset; order:3; width:100%; justify-content:flex-end; }
+  .controls{ flex-direction:column; align-items:stretch; gap:8px; }
+  .controls input[type="range"]{ width:100%; }
+}

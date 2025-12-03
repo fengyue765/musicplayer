@@ -1,0 +1,38 @@
+:root{
+  --bg:#FFF8FB;
+  --card:#fff;
+  --muted:#6b6b77;
+  --accent-pink:#F8D7E9;
+  --accent-purple:#EDE7FF;
+  --accent-cream:#FFF6E8;
+  --text:#2b2b34;
+  --shadow: 0 8px 24px rgba(43,43,52,0.08);
+  --radius:14px;
+}
+
+/* Page background with soft radial accents */
+body{
+  margin:0;
+  font-family: Inter, "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui;
+  background: linear-gradient(180deg, var(--bg) 0%, #FFFDFD 100%);
+  color:var(--text);
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  min-height:100vh;
+  display:flex;
+  align-items:flex-start;
+  justify-content:center;
+  padding:36px 18px;
+}
+
+/* decorative svg strip */
+.decor-bg{
+  position:fixed;
+  left:0; right:0;
+  top:0;
+  height:120px;
+  pointer-events:none;
+  z-index:0;
+  opacity:0.95;
+}
+.decor-svg{ width:100%; height:100%; display:block; }
