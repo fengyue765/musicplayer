@@ -25,7 +25,36 @@
 
 ---
 
-## 快速开始（本地运行）
+## 快速开始
+
+- 安装依赖（推荐先同步 lockfile）：
+  - 如果 lockfile 与 package.json 不一致，请先运行：
+    ```bash
+    npm install
+    git add package-lock.json
+    git commit -m "chore: update package-lock.json"
+    ```
+  - 然后使用干净安装：
+    ```bash
+    npm ci
+    ```
+- 在对应平台上运行 electron-builder：
+  - Windows:
+    ```bash
+    npx electron-builder --win --x64 --publish never
+    ```
+  - macOS:
+    ```bash
+    npx electron-builder --mac --x64 --publish never
+    ```
+  - Linux:
+    ```bash
+    npx electron-builder --linux --x64 --publish never
+    ```
+- 构建产物默认输出在 `dist/` 目录下（例如 .exe、.dmg、AppImage 等）。
+  - 也可以在github的Actions中使用Build Electron app创建工作流进行自动构建。
+
+### 以下适用于1.x版本，使用WebUI支持
 1. 克隆仓库并切到项目目录：
    - git clone https://github.com/fengyue765/musicplayer.git
    - cd musicplayer
@@ -58,15 +87,49 @@
 ---
 
 ## 常见问题
-- “无法选择目录 / 页面无法读取文件”：请确认你通过 `http://localhost` 或 HTTPS 打开页面，而不是 `file://`；并使用 Chromium 系浏览器以获得 showDirectoryPicker 支持。
-- “播放后音量忽高忽低”：可启用“自动均衡”功能，播放器会分析并平滑应用归一化增益（首次分析时可能有短延迟）。
-- “如何清除统计数据或已记住的目录？”：在 UI 中有“清除已记住的文件夹”按钮；若需要清空统计可在浏览器开发者工具中清除 localStorage 对应键，或我可以在 UI 中添加“清空统计”按钮。
+1. npm ci 报 “package.json 与 package-lock.json 不一致”
+   - 原因：package.json 被修改但 lockfile 未更新。
+   - 解决：
+     ```bash
+     npm install
+     # 或仅更新 lockfile
+     npm install --package-lock-only
+     git add package-lock.json
+     git commit -m "chore: regenerate package-lock.json"
+     ```
+   - 之后在 CI 使用 `npm ci`。
+
+2. Windows 上 npm ci / electron-builder 报 EBUSY 或文件被锁定（例如 default_app.asar）
+   - 先关闭所有可能占用项目文件的程序（Electron 应用、node 进程、编辑器的终端或调试会话）。
+   - 在任务管理器结束 `node.exe` / `electron.exe` 等进程，或重启电脑释放锁。
+   - 如需强制清理：
+     ```powershell
+     # 在管理员 PowerShell 中
+     Remove-Item -Recurse -Force .\node_modules
+     Remove-Item -Recurse -Force "$env:LocalAppData\electron-builder\Cache\winCodeSign"
+     npm ci
+     ```
+   - 若找不到占用进程，可使用 Sysinternals Process Explorer 的 “Find Handle or DLL” 功能查找并关闭句柄。
+
+3. Windows 下解压 electron-builder 的工具包报 “Cannot create symbolic link”
+   - 原因：7-Zip 解压包含符号链接的文件（.dylib 等）时，当前账号无权限创建 symlink。
+   - 解决（按顺序尝试）：
+     - 以管理员权限运行终端重试（右键 → 以管理员身份运行）。
+     - 启用 Developer Mode（设置 → 更新与安全 → 面向开发人员 → 开启）。
+     - 如必要，临时关闭杀毒软件/Windows Defender 实时保护或将 `%LocalAppData%\electron-builder\Cache` 加入排除。
+   - 清除缓存并重试：
+     ```powershell
+     Remove-Item -Recurse -Force "$env:LocalAppData\electron-builder\Cache\winCodeSign"
+     npm ci
+     npx electron-builder --win --x64 --publish never
+     ```
 
 ---
 
 ## 开发与贡献
+- 开发者：Github Copilot (GPT-5 mini)
 - 语言：JavaScript / HTML / CSS
-- 仓库语言构成（简要）：JavaScript ~73% / CSS ~16% / HTML ~11%
+- 仓库语言构成（简要）：JavaScript ~78% / CSS ~13% / HTML ~9%
 
 ---
 
