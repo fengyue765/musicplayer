@@ -1,11 +1,42 @@
 {
   "name": "musicplayer-desktop",
   "version": "1.0.0",
-  "description": "Local music player (Electron) — forked from web UI",
-  "main": "main.js",
+  "description": "Local music player (Electron)",
+  "main": "electron-main.js",
   "scripts": {
     "start": "electron .",
-    "pack": "electron-packager . MusicPlayer --platform=darwin,win32,linux --arch=x64 --out=dist --overwrite"
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --windows --x64",
+    "dist:linux": "electron-builder --linux --x64",
+    "clean": "rimraf dist"
+  },
+  "build": {
+    "appId": "com.fengyue.musicplayer",
+    "productName": "MusicPlayer",
+    "files": [
+      "**/*",
+      "!node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}"
+    ],
+    "directories": {
+      "buildResources": "build"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "MusicPlayer-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "artifactName": "MusicPlayer-${version}-linux.${ext}"
+    }
   },
   "dependencies": {
     "chokidar": "^3.5.3",
@@ -13,7 +44,8 @@
   },
   "devDependencies": {
     "electron": "^25.3.0",
-    "electron-packager": "^17.1.0"
+    "electron-builder": "^24.6.0",
+    "rimraf": "^5.0.0"
   },
   "keywords": [],
   "author": "",

@@ -1,11 +1,12 @@
-// main.js — 修复/增强：解决 shuffle 与 repeat-one 行为问题，增加诊断日志与稳健性
-// 依赖：storage.js, audioGraph.js, normalize.js（保持原有模块结构）
+// renderer.js — 完整版（Electron 兼容）
+// 说明：保留原有业务逻辑（shuffle/repeat/统计/normalize/render），并把目录访问替换为 window.api（preload）优先。
+// 如果在浏览器端运行，会回退到原生 showDirectoryPicker / file handles（假如存在）。
 
 import { loadStats, saveStats, loadUIState, saveUIState, idbPut, idbGet, idbDelete } from './storage.js';
 import { ensureAudioGraph, applyGainSmooth, getAudioContext } from './audioGraph.js';
 import { analyzeAndCacheNormalize } from './normalize.js';
 
-/* --- DOM references --- */
+/* DOM refs */
 const audio = document.getElementById('audio');
 const chooseDirBtn = document.getElementById('chooseDir');
 const refreshBtn = document.getElementById('refreshBtn');
@@ -26,20 +27,27 @@ const sortSelect = document.getElementById('sortSelect');
 const sortDirBtn = document.getElementById('sortDirBtn');
 const autoNormalizeCheckbox = document.getElementById('autoNormalize');
 
-/* --- State --- */
-let playlist = [];
+/* State */
+let playlist = []; // items: { name, path?, url?, fileHandle?, size, id, _objectUrl }
 let currentIndex = -1;
-let currentDirHandle = null;
+let currentDirPath = null; // string path (Electron) or FileSystemDirectoryHandle (browser)
 let isShuffle = false;
 let repeatOne = false;
-let playOrder = []; // indices into playlist, used when isShuffle === true
+let playOrder = [];
 let orderPos = 0;
 let uiState = loadUIState();
 let stats = loadStats();
 let sessionActive = false;
 let sessionIndex = -1;
 
-/* --- Helpers --- */
+/* Compatibility shim */
+const hasElectronApi = typeof window !== 'undefined' && window.api && typeof window.api.chooseDirectory === 'function';
+
+/* Helpers */
+function logDebug(...args){
+  console.debug('[player]', ...args);
+  if (dirStatus) dirStatus.textContent = String(args[0]);
+}
 function getTrackId(track){
   if (track.id) return track.id;
   if (typeof track.size === 'number') { track.id = `${track.name}::${track.size}`; }
@@ -52,15 +60,8 @@ function ensureStatsForTrack(track){
   return stats[id];
 }
 function persistStats(){ saveStats(stats); }
-function logDebug(...args){
-  // 输出到 console 并在 dirStatus 显示短消息（保留最后一行）
-  console.debug('[player]', ...args);
-  if (dirStatus) {
-    dirStatus.textContent = String(args[0]);
-  }
-}
 
-/* --- Sorting + rendering --- */
+/* Sorting + render (same logic as before) */
 function getSortedIndices(){
   const indices = playlist.map((_,i)=>i);
   const key = uiState.sortKey || 'default';
@@ -97,7 +98,7 @@ function renderPlaylist(){
     const avg = st.sessionCount ? (st.completionSum / st.sessionCount) : 0;
     const percent = st.sessionCount ? Math.round(avg*100) : '-';
     const loud = (typeof st.loudnessDb === 'number') ? `${Math.round(st.loudnessDb)}dB` : '';
-    right.textContent = `播放:${st.playCount||0}  切歌:${st.skipCount||0}  完播:${percent==='-'?'-':percent+'%'}`;
+    right.textContent = `播放:${st.playCount||0}  切歌:${st.skipCount||0}  完播:${percent==='-'?'-':percent+'%'} ${loud}`;
     div.appendChild(left); div.appendChild(right);
     div.onclick = async ()=>{
       if (currentIndex !== -1 && currentIndex !== i && audio.currentTime > 1 && !audio.ended) {
@@ -116,7 +117,7 @@ function renderPlaylist(){
   if (autoNormalizeCheckbox) autoNormalizeCheckbox.checked = !!uiState.autoNormalize;
 }
 
-/* --- Session & stats --- */
+/* Session & stats */
 function startSessionIfNeeded(){
   if (currentIndex === -1) return;
   if (sessionActive && sessionIndex === currentIndex) return;
@@ -140,7 +141,7 @@ function finalizeSessionForIndex(idx, isComplete=false){
 function incrementPlayCount(track){ const s = ensureStatsForTrack(track); s.playCount = (s.playCount||0)+1; persistStats(); renderPlaylist(); }
 function incrementSkipCount(track){ const s = ensureStatsForTrack(track); s.skipCount = (s.skipCount||0)+1; persistStats(); renderPlaylist(); }
 
-/* --- Shuffle weight generation (unchanged) --- */
+/* Shuffle weight generation */
 const BASE = 0.01;
 const SKIP_PENALTY = 2.0;
 const MIN_COMPLETION = 0.05;
@@ -157,13 +158,11 @@ function computeWeightForTrack(track){
   return w;
 }
 function generateWeightedOrder(startIndex = null){
-  // robust generation: always include all indices and return array of indices
   const indices = playlist.map((_,i)=>i);
   const weights = indices.map(i => computeWeightForTrack(playlist[i]));
   const idxs = indices.slice();
   const ws = weights.slice();
   const order = [];
-  // if startIndex provided, ensure it's first in the order (and removed from candidate lists)
   if (typeof startIndex === 'number' && startIndex >= 0){
     const pos = idxs.indexOf(startIndex);
     if (pos !== -1) {
@@ -194,10 +193,9 @@ function generateWeightedOrder(startIndex = null){
   return order;
 }
 
-/* --- Normalization plumbing --- */
+/* Normalization plumbing */
 function onTrackLoadedApplyNormalize(track){
   if (!uiState.autoNormalize) return;
-  // ensure audio graph exists
   const ok = ensureAudioGraph(audio);
   if (!ok) return;
   const id = getTrackId(track);
@@ -206,7 +204,6 @@ function onTrackLoadedApplyNormalize(track){
     applyGainSmooth(s.normalizeGain);
     return;
   }
-  // analyze in background
   analyzeAndCacheNormalize(track, stats).then(res=>{
     if (!res) return;
     persistStats();
@@ -218,12 +215,14 @@ function onTrackLoadedApplyNormalize(track){
   });
 }
 
-/* --- Load / play control --- */
+/* Load / play control (adapted for Electron: path -> file:// via window.api.getFileUrl) */
 async function loadTrack(idx){
   if (idx < 0 || idx >= playlist.length) return;
   currentIndex = idx;
   const item = playlist[idx];
-  if (item.fileHandle){
+  if (item.path && hasElectronApi){
+    audio.src = window.api.getFileUrl(item.path);
+  } else if (item.fileHandle){
     try {
       const file = await item.fileHandle.getFile();
       if (item._objectUrl) URL.revokeObjectURL(item._objectUrl);
@@ -232,7 +231,12 @@ async function loadTrack(idx){
       getTrackId(item);
       audio.src = item._objectUrl;
     } catch (e) { console.error('读取文件失败', e); alert('无法读取某个文件（权限/文件损坏），请检查。'); return; }
-  } else if (item.url) audio.src = item.url;
+  } else if (item.url) {
+    audio.src = item.url;
+  } else if (item.path) {
+    // fallback: may be file:// already
+    audio.src = item.path;
+  }
   currentTitle.textContent = item.name;
   renderPlaylist();
   onTrackLoadedApplyNormalize(item);
@@ -241,7 +245,6 @@ async function loadTrack(idx){
 function preparePlayStart(){
   if (!playlist.length) return;
   if (isShuffle) {
-    // regenerate playOrder robustly and align orderPos to currentIndex if present
     playOrder = generateWeightedOrder(currentIndex >= 0 ? currentIndex : 0);
     orderPos = Math.max(0, playOrder.indexOf(currentIndex >= 0 ? currentIndex : playOrder[0]));
     const idx = playOrder[orderPos];
@@ -250,7 +253,6 @@ function preparePlayStart(){
     loadTrack(0);
   }
 }
-
 function play(){ if (currentIndex === -1 && playlist.length) preparePlayStart(); audio.play(); }
 function pause(){ audio.pause(); }
 
@@ -270,7 +272,6 @@ prevBtn.onclick = ()=>{
       loadTrack(idx).then(()=> play());
       locateCurrentInPlaylist();
     } else {
-      // already at start of shuffle order; wrap to last
       orderPos = Math.max(0, playOrder.length - 1);
       const idx = playOrder[orderPos];
       if (currentIndex !== -1 && audio.currentTime > 1 && !audio.ended) { finalizeSessionForIndex(currentIndex,false); incrementSkipCount(playlist[currentIndex]); }
@@ -300,7 +301,6 @@ audio.onended = ()=>{
     incrementPlayCount(playlist[currentIndex]);
   }
   if (repeatOne){
-    // repeat single track; do not advance orderPos
     audio.currentTime = 0;
     play();
     return;
@@ -313,7 +313,6 @@ function gotoNext(){
   if (isShuffle){
     orderPos++;
     if (orderPos >= playOrder.length){
-      // reshuffle and start from beginning
       playOrder = generateWeightedOrder();
       orderPos = 0;
     }
@@ -327,21 +326,17 @@ function gotoNext(){
   }
 }
 
-/* --- Shuffle & Repeat button handlers (fixed and more robust) --- */
+/* Shuffle & Repeat handlers */
 shuffleBtn.onclick = ()=>{
   isShuffle = !isShuffle;
   shuffleBtn.style.filter = isShuffle ? 'brightness(1.05)' : '';
   logDebug('Shuffle ' + (isShuffle ? 'ENABLED' : 'DISABLED'));
   if (isShuffle){
-    // generate new weighted order and align with currentIndex if present
     playOrder = generateWeightedOrder(currentIndex >= 0 ? currentIndex : 0);
-    // ensure orderPos points to currentIndex's position in playOrder
     if (currentIndex >= 0){
       const pos = playOrder.indexOf(currentIndex);
       orderPos = pos >= 0 ? pos : 0;
-    } else {
-      orderPos = 0;
-    }
+    } else orderPos = 0;
   } else {
     playOrder = [];
     orderPos = 0;
@@ -354,10 +349,157 @@ repeatBtn.onclick = ()=>{
   logDebug('Repeat-One ' + (repeatOne ? 'ENABLED' : 'DISABLED'));
 };
 
-/* --- File/Directory functions (unchanged) --- */
+/* File/Directory functions (Electron-aware) */
 function extMatches(name){ return ['.mp3','.m4a'].some(e => name.toLowerCase().endsWith(e)); }
 function formatTime(sec){ if (!isFinite(sec)) return '0:00'; sec = Math.floor(sec); const m = Math.floor(sec/60); const s = sec%60; return `${m}:${s.toString().padStart(2,'0')}`; }
 
+function normalizeFilesFromReadResult(files){
+  // files from window.api.readDirectory: [{name,path,size}]
+  return files.filter(f => extMatches(f.name)).map(f => ({ name: f.name, path: f.path, size: f.size }));
+}
+
+/* Persist directory path (use localStorage for cross-platform simplicity) */
+function saveDirectoryPath(p){ try { localStorage.setItem('lastDirPath_v1', p); } catch(e){} }
+function getStoredDirectoryPath(){ try { return localStorage.getItem('lastDirPath_v1'); } catch(e){ return null; } }
+function clearStoredDirectoryPath(){ try { localStorage.removeItem('lastDirPath_v1'); } catch(e){} }
+
+/* choose/refresh/restore */
+chooseDirBtn.onclick = async ()=>{
+  try {
+    if (hasElectronApi){
+      const dirPath = await window.api.chooseDirectory();
+      if (!dirPath) return;
+      currentDirPath = dirPath;
+      playlist = [];
+      dirStatus.textContent = '加载中…';
+      const res = await window.api.readDirectory(dirPath);
+      if (!res.ok) { dirStatus.textContent = '读取目录失败: ' + (res.error||''); return; }
+      playlist = normalizeFilesFromReadResult(res.files);
+      if (!playlist.length) { dirStatus.textContent = '所选目录未包含 mp3 或 m4a 文件。'; renderPlaylist(); return; }
+      renderPlaylist(); await loadTrack(0);
+      dirStatus.textContent = `已加载 ${playlist.length} 首歌曲（已记住该目录）`;
+      saveDirectoryPath(dirPath);
+      // start watch
+      await window.api.watchDirectory(dirPath);
+      window.api.onDirChanged((info) => {
+        if (info.dirPath === currentDirPath) {
+          dirStatus.textContent = `检测到目录变更（${info.eventType}），刷新中…`;
+          setTimeout(()=> refreshDirectory(), 300);
+        }
+      });
+    } else {
+      // browser fallback
+      if (!window.showDirectoryPicker) { alert('浏览器不支持目录访问，请用 Electron 或 Chromium 并通过本地服务器打开。'); return; }
+      const dirHandle = await window.showDirectoryPicker();
+      if (!dirHandle) return;
+      currentDirPath = dirHandle;
+      playlist = [];
+      dirStatus.textContent = '加载中…';
+      const results = await walkDirectory(dirHandle);
+      playlist = results;
+      if (!playlist.length) { dirStatus.textContent = '所选目录未包含 mp3 或 m4a 文件。'; renderPlaylist(); return; }
+      renderPlaylist(); await loadTrack(0);
+      dirStatus.textContent = `已加载 ${playlist.length} 首歌曲（会尝试记住该目录）`;
+      try { await idbPut('lastDir', dirHandle); } catch(e){ console.warn(e); }
+    }
+  } catch (err) { console.error(err); if (err && err.name !== 'AbortError') dirStatus.textContent = '选择目录失败：' + (err.message||err); }
+};
+
+refreshBtn.onclick = async ()=> { await refreshDirectory(); };
+clearSavedBtn.onclick = async ()=>{
+  if (hasElectronApi){
+    clearStoredDirectoryPath();
+    dirStatus.textContent = '已清除已记住的目录。';
+    currentDirPath = null;
+  } else {
+    await clearStoredDirectoryHandle();
+    dirStatus.textContent = '已清除已记住的目录。';
+    currentDirPath = null;
+  }
+};
+
+(async function tryRestoreLastDirectory(){
+  applyUIStateToDom();
+  if (hasElectronApi){
+    const stored = getStoredDirectoryPath();
+    if (!stored){ dirStatus.textContent = '尚未记住任何目录，点击“选择 / 更换 文件夹”以开始。'; return; }
+    try {
+      dirStatus.textContent = '恢复上次目录中…';
+      currentDirPath = stored;
+      const res = await window.api.readDirectory(stored);
+      if (!res.ok){ dirStatus.textContent = '恢复目录失败：' + (res.error||''); return; }
+      playlist = normalizeFilesFromReadResult(res.files);
+      if (!playlist.length){ dirStatus.textContent = '上次目录中未找到 mp3 / m4a 文件。'; renderPlaylist(); return; }
+      renderPlaylist(); await loadTrack(0); dirStatus.textContent = `已恢复上次目录，共 ${playlist.length} 首歌曲。`;
+      await window.api.watchDirectory(stored);
+      window.api.onDirChanged((info) => {
+        if (info.dirPath === currentDirPath){ dirStatus.textContent = `检测到目录变更（${info.eventType}），刷新中…`; setTimeout(()=> refreshDirectory(), 300); }
+      });
+    } catch (e){ console.error('恢复目录失败', e); dirStatus.textContent = '恢复上次目录失败，请手动重新选择目录。'; }
+  } else {
+    // browser flow
+    applyUIStateToDom();
+    if (!window.showDirectoryPicker) { dirStatus.textContent = '当前浏览器不支持记住目录（需要 File System Access API）。'; return; }
+    const stored = await getStoredDirectoryHandle();
+    if (!stored) { dirStatus.textContent = '尚未记住任何目录，点击“选择 / 更换 文件夹”以开始。'; return; }
+    const ok = await verifyPermission(stored);
+    if (!ok) { dirStatus.textContent = '已记住目录，但尚未授权读取权限。请点击“选择 / 更换 文件夹”并允许访问以刷新权限。'; return; }
+    try {
+      dirStatus.textContent = '恢复上次目录中…';
+      currentDirPath = stored;
+      const results = await walkDirectory(stored);
+      playlist = results;
+      if (!playlist.length) { dirStatus.textContent = '上次目录中未找到 mp3 / m4a 文件。'; renderPlaylist(); return; }
+      renderPlaylist(); await loadTrack(0);
+      dirStatus.textContent = `已恢复上次目录，共 ${playlist.length} 首歌曲。`;
+    } catch (e) { console.error('恢复目录失败', e); dirStatus.textContent = '恢复上次目录失败，请手动重新选择目录。'; }
+  }
+})();
+
+async function refreshDirectory(){
+  if (!currentDirPath) { dirStatus.textContent = '未选择目录，无法刷新。'; return; }
+  dirStatus.textContent = '刷新中…';
+  try {
+    if (hasElectronApi){
+      const res = await window.api.readDirectory(currentDirPath);
+      if (!res.ok){ dirStatus.textContent = '刷新失败：' + (res.error||''); return; }
+      const newList = normalizeFilesFromReadResult(res.files);
+      // maintain current track if possible
+      const oldIds = playlist.map(p => getTrackId(p)), oldIdToIndex = {};
+      oldIds.forEach((id, idx)=> oldIdToIndex[id] = idx);
+      const newIds = newList.map(p => getTrackId(p));
+      const added = newIds.filter(id => !oldIdToIndex.hasOwnProperty(id));
+      const removed = oldIds.filter(id => !newIds.includes(id));
+      let newCurrentIndex = -1;
+      if (currentIndex !== -1){
+        const curId = getTrackId(playlist[currentIndex]);
+        newCurrentIndex = newIds.indexOf(curId);
+      }
+      playlist = newList;
+      if (isShuffle){
+        playOrder = generateWeightedOrder(currentIndex >= 0 ? currentIndex : 0);
+        orderPos = Math.max(0, playOrder.indexOf(currentIndex >= 0 ? currentIndex : playOrder[0]));
+      }
+      if (newCurrentIndex !== -1){ await loadTrack(newCurrentIndex); if (!audio.paused) play(); locateCurrentInPlaylist(); }
+      else { if (currentIndex !== -1) { finalizeSessionForIndex(currentIndex,false); audio.pause(); currentIndex = -1; currentTitle.textContent = '（当前曲目已被删除或移动）'; } if (playlist.length) await loadTrack(0); }
+      renderPlaylist(); dirStatus.textContent = `刷新完成。新增 ${added.length} / 删除 ${removed.length}。共 ${playlist.length} 首。`;
+    } else {
+      // browser flow
+      const newList = await walkDirectory(currentDirPath);
+      // similar merge logic...
+      playlist = newList;
+      renderPlaylist();
+      dirStatus.textContent = `刷新完成，共 ${playlist.length} 首`;
+    }
+  } catch (e) { console.error('刷新失败', e); dirStatus.textContent = '刷新失败，请重新选择目录或检查权限。'; }
+}
+
+/* drag/drop/paste */
+document.addEventListener('dragover', e=> e.preventDefault());
+document.addEventListener('drop', e=>{ e.preventDefault(); const files = Array.from(e.dataTransfer.files || []); if (!files.length) return; addFilesFromFileList(files); renderPlaylist(); });
+document.addEventListener('paste', e=>{ const items = Array.from(e.clipboardData.items || []); const files = items.filter(it => it.kind === 'file').map(it => it.getAsFile()).filter(Boolean); if (files.length) { addFilesFromFileList(files); renderPlaylist(); } });
+
+/* add files helpers */
 function addFilesFromFileList(fileList){
   for (const f of fileList) {
     if (!extMatches(f.name)) continue;
@@ -383,6 +525,8 @@ async function addFilesFromHandles(handles){
   if (playlist.length && currentIndex === -1) await loadTrack(0);
   else renderPlaylist();
 }
+
+/* walkDirectory & permission helpers (browser fallback) */
 async function walkDirectory(dirHandle, pathPrefix = ''){
   const results = [];
   for await (const [name, handle] of dirHandle.entries()) {
@@ -400,8 +544,6 @@ async function walkDirectory(dirHandle, pathPrefix = ''){
   }
   return results;
 }
-
-/* Persist directory handle via IDB */
 async function saveDirectoryHandle(handle){ try { await idbPut('lastDir', handle); } catch (e) { console.warn(e); } }
 async function getStoredDirectoryHandle(){ try { return await idbGet('lastDir'); } catch (e) { return null; } }
 async function clearStoredDirectoryHandle(){ try { await idbDelete('lastDir'); } catch (e) { console.warn(e); } }
@@ -415,76 +557,6 @@ async function verifyPermission(handle){
   return false;
 }
 
-/* choose/refresh/restore */
-chooseDirBtn.onclick = async ()=>{
-  if (!window.showDirectoryPicker) { alert('您的浏览器不支持目录访问。请使用 Chromium 系浏览器或用拖拽方式添加文件。'); return; }
-  try {
-    const dirHandle = await window.showDirectoryPicker();
-    if (!dirHandle) return;
-    currentDirHandle = dirHandle;
-    playlist = [];
-    dirStatus.textContent = '加载中…';
-    const results = await walkDirectory(dirHandle);
-    playlist = results;
-    if (!playlist.length) { dirStatus.textContent = '所选目录未包含 mp3 或 m4a 文件。'; return; }
-    renderPlaylist(); await loadTrack(0);
-    dirStatus.textContent = `已加载 ${playlist.length} 首歌曲（已记住该目录）`;
-    const ok = await verifyPermission(dirHandle); if (ok) await saveDirectoryHandle(dirHandle);
-  } catch (err) { if (err && err.name !== 'AbortError') console.error(err); }
-};
-refreshBtn.onclick = async ()=> { await refreshDirectory(); };
-clearSavedBtn.onclick = async ()=>{ await clearStoredDirectoryHandle(); dirStatus.textContent = '已清除记住的目录。'; currentDirHandle = null; };
-
-(async function tryRestoreLastDirectory(){
-  applyUIStateToDom();
-  if (!window.showDirectoryPicker) { dirStatus.textContent = '当前浏览器不支持记住目录（需要 File System Access API）。'; return; }
-  const stored = await getStoredDirectoryHandle();
-  if (!stored) { dirStatus.textContent = '尚未记住任何目录，点击“选择 / 更换 文件夹”以开始。'; return; }
-  const ok = await verifyPermission(stored);
-  if (!ok) { dirStatus.textContent = '已记住目录，但尚未授权读取权限。请点击“选择 / 更换 文件夹”并允许访问以刷新权限。'; return; }
-  try {
-    dirStatus.textContent = '恢复上次目录中…';
-    currentDirHandle = stored;
-    const results = await walkDirectory(stored);
-    playlist = results;
-    if (!playlist.length) { dirStatus.textContent = '上次目录中未找到 mp3 / m4a 文件。'; return; }
-    renderPlaylist(); await loadTrack(0); dirStatus.textContent = `已恢复上次目录，共 ${playlist.length} 首歌曲。`; locateCurrentInPlaylist();
-  } catch (e) { console.error('恢复目录失败', e); dirStatus.textContent = '恢复上次目录失败，请手动重新选择目录。'; }
-})();
-
-async function refreshDirectory(){
-  if (!currentDirHandle) { dirStatus.textContent = '未选择目录，无法刷新。'; return; }
-  dirStatus.textContent = '刷新中…';
-  try {
-    const newList = await walkDirectory(currentDirHandle);
-    const oldIds = playlist.map(p => getTrackId(p)), oldIdToIndex = {};
-    oldIds.forEach((id, idx)=> oldIdToIndex[id] = idx);
-    const newIds = newList.map(p => getTrackId(p));
-    const added = newIds.filter(id => !oldIdToIndex.hasOwnProperty(id));
-    const removed = oldIds.filter(id => !newIds.includes(id));
-    let newCurrentIndex = -1;
-    if (currentIndex !== -1) {
-      const curId = getTrackId(playlist[currentIndex]);
-      newCurrentIndex = newIds.indexOf(curId);
-    }
-    playlist = newList;
-    // If playOrder was active, rebuild it to reflect new playlist size and maintain current
-    if (isShuffle) {
-      playOrder = generateWeightedOrder(currentIndex >= 0 ? currentIndex : 0);
-      // align orderPos to currentIndex if possible
-      orderPos = Math.max(0, playOrder.indexOf(currentIndex >= 0 ? currentIndex : playOrder[0]));
-    }
-    if (newCurrentIndex !== -1) { await loadTrack(newCurrentIndex); if (!audio.paused) play(); locateCurrentInPlaylist(); }
-    else { if (currentIndex !== -1) { finalizeSessionForIndex(currentIndex,false); audio.pause(); currentIndex = -1; currentTitle.textContent = '（当前曲目已被删除或移动）'; } if (playlist.length) await loadTrack(0); }
-    renderPlaylist(); dirStatus.textContent = `刷新完成。新增 ${added.length} / 删除 ${removed.length}。共 ${playlist.length} 首。`;
-  } catch (e) { console.error('刷新失败', e); dirStatus.textContent = '刷新失败，请重新选择目录或检查权限。'; }
-}
-
-/* drag & drop & paste */
-document.addEventListener('dragover', e=> e.preventDefault());
-document.addEventListener('drop', e=>{ e.preventDefault(); const files = Array.from(e.dataTransfer.files || []); if (!files.length) return; addFilesFromFileList(files); renderPlaylist(); });
-document.addEventListener('paste', e=>{ const items = Array.from(e.clipboardData.items || []); const files = items.filter(it => it.kind === 'file').map(it => it.getAsFile()).filter(Boolean); if (files.length) { addFilesFromFileList(files); renderPlaylist(); } });
-
 /* UI helpers */
 function applyUIStateToDom(){
   if (uiState.playlistCollapsed) playlistEl.classList.add('collapsed'); else playlistEl.classList.remove('collapsed');
@@ -497,11 +569,9 @@ locateBtn.onclick = ()=> locateCurrentInPlaylist();
 function locateCurrentInPlaylist(){ if (currentIndex === -1) return; if (uiState.playlistCollapsed) { uiState.playlistCollapsed = false; saveUIState(uiState); applyUIStateToDom(); requestAnimationFrame(()=> setTimeout(scrollToActiveItem, 180)); } else scrollToActiveItem(); }
 function scrollToActiveItem(){ const selector = `.item[data-index="${currentIndex}"]`; const el = playlistEl.querySelector(selector); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('locate-highlight'); setTimeout(()=> el.classList.remove('locate-highlight'), 2000); }
 
-/* sort controls */
+/* sort controls / autoNormalize */
 if (sortSelect) sortSelect.onchange = ()=>{ uiState.sortKey = sortSelect.value; saveUIState(uiState); renderPlaylist(); };
 if (sortDirBtn) sortDirBtn.onclick = ()=>{ uiState.sortDir = (uiState.sortDir === 'asc') ? 'desc' : 'asc'; saveUIState(uiState); applyUIStateToDom(); renderPlaylist(); };
-
-/* autoNormalize control */
 if (autoNormalizeCheckbox) {
   autoNormalizeCheckbox.onchange = ()=>{
     uiState.autoNormalize = !!autoNormalizeCheckbox.checked;
@@ -515,7 +585,7 @@ if (autoNormalizeCheckbox) {
 applyUIStateToDom();
 renderPlaylist();
 
-/* Expose some internals for debugging */
+/* Expose internals for debugging */
 window.__player = {
   playlist,
   stats,
