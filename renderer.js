@@ -274,8 +274,8 @@ function play(){ if (currentIndex === -1 && playlist.length) preparePlayStart();
 function pause(){ audio.pause(); }
 
 playBtn.onclick = ()=>{ if (!audio.src && playlist.length) preparePlayStart(); if (audio.paused) play(); else pause(); };
-audio.onplay = ()=>{ playBtn.textContent = '⏸'; startSessionIfNeeded(); const ac = getAudioContext(); if (ac && ac.state === 'suspended') ac.resume().catch(()=>{}); };
-audio.onpause = ()=> playBtn.textContent = '▶️';
+audio.onplay = ()=>{ playBtn.innerHTML = '<i class="ri-pause-fill"></i>'; startSessionIfNeeded(); const ac = getAudioContext(); if (ac && ac.state === 'suspended') ac.resume().catch(()=>{}); };
+audio.onpause = ()=> playBtn.innerHTML = '<i class="ri-play-fill"></i>';
 audio.ontimeupdate = ()=>{ if (audio.duration) { seek.value = (audio.currentTime / audio.duration) * 100; timeEl.textContent = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`; } };
 seek.oninput = ()=>{ if (audio.duration) audio.currentTime = (seek.value/100) * audio.duration; };
 

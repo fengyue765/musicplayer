@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>本地文件音乐播放器</title>
+  <!-- RemixIcon CDN -->
+  <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
   <!-- 分拆后的样式文件 -->
   <link rel="stylesheet" href="styles/theme.css" />
   <link rel="stylesheet" href="styles/layout.css" />
@@ -70,8 +72,8 @@
             <input id="autoNormalize" type="checkbox" />
             自动均衡
           </label>
-          <button id="shuffleBtn" class="icon-btn" title="随机播放">🔀</button>
-          <button id="repeatBtn" class="icon-btn" title="单曲循环">🔁</button>
+          <button id="shuffleBtn" class="icon-btn" title="随机播放"><i class="ri-shuffle-line"></i></button>
+          <button id="repeatBtn" class="icon-btn" title="单曲循环"><i class="ri-repeat-one-line"></i></button>
         </div>
       </div>
 
@@ -82,9 +84,9 @@
       <audio id="audio" preload="metadata"></audio>
 
       <div class="controls">
-        <button id="prev" class="control">⏮</button>
-        <button id="play" class="control large">▶️</button>
-        <button id="next" class="control">⏭</button>
+        <button id="prev" class="control"><i class="ri-skip-back-mini-fill"></i></button>
+        <button id="play" class="control large"><i class="ri-play-fill"></i></button>
+        <button id="next" class="control"><i class="ri-skip-forward-mini-fill"></i></button>
         <input id="seek" type="range" min="0" max="100" value="0" />
         <span id="time" class="time">0:00 / 0:00</span>
       </div>
