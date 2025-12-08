@@ -1,5 +1,4 @@
 const { app, BrowserWindow, ipcMain, dialog, session } = require('electron');
-const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs').promises;
 const chokidar = require('chokidar');
@@ -7,52 +6,63 @@ const chokidar = require('chokidar');
 let mainWindow;
 const watchers = new Map();
 
-// Configure autoUpdater
-autoUpdater.autoDownload = false; // Manual download control
-autoUpdater.autoInstallOnAppQuit = true;
+// Try to load electron-updater, but make it optional so the app still works without it
+let autoUpdater = null;
+try {
+  autoUpdater = require('electron-updater').autoUpdater;
+  
+  // Configure autoUpdater
+  autoUpdater.autoDownload = false; // Manual download control
+  autoUpdater.autoInstallOnAppQuit = true;
 
-// Auto-updater event handlers
-autoUpdater.on('checking-for-update', () => {
-  console.log('[updater] Checking for update...');
-  if (mainWindow) {
-    mainWindow.webContents.send('update-checking');
-  }
-});
+  // Auto-updater event handlers
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[updater] Checking for update...');
+    if (mainWindow) {
+      mainWindow.webContents.send('update-checking');
+    }
+  });
 
-autoUpdater.on('update-available', (info) => {
-  console.log('[updater] Update available:', info.version);
-  if (mainWindow) {
-    mainWindow.webContents.send('update-available', info);
-  }
-});
+  autoUpdater.on('update-available', (info) => {
+    console.log('[updater] Update available:', info.version);
+    if (mainWindow) {
+      mainWindow.webContents.send('update-available', info);
+    }
+  });
 
-autoUpdater.on('update-not-available', (info) => {
-  console.log('[updater] Update not available. Current version:', info.version);
-  if (mainWindow) {
-    mainWindow.webContents.send('update-not-available', info);
-  }
-});
+  autoUpdater.on('update-not-available', (info) => {
+    console.log('[updater] Update not available. Current version:', info.version);
+    if (mainWindow) {
+      mainWindow.webContents.send('update-not-available', info);
+    }
+  });
 
-autoUpdater.on('error', (err) => {
-  console.error('[updater] Error:', err);
-  if (mainWindow) {
-    mainWindow.webContents.send('update-error', { message: err.message });
-  }
-});
+  autoUpdater.on('error', (err) => {
+    console.error('[updater] Error:', err);
+    if (mainWindow) {
+      mainWindow.webContents.send('update-error', { message: err.message });
+    }
+  });
 
-autoUpdater.on('download-progress', (progressObj) => {
-  console.log(`[updater] Download progress: ${Math.round(progressObj.percent)}%`);
-  if (mainWindow) {
-    mainWindow.webContents.send('update-download-progress', progressObj);
-  }
-});
+  autoUpdater.on('download-progress', (progressObj) => {
+    console.log(`[updater] Download progress: ${Math.round(progressObj.percent)}%`);
+    if (mainWindow) {
+      mainWindow.webContents.send('update-download-progress', progressObj);
+    }
+  });
 
-autoUpdater.on('update-downloaded', (info) => {
-  console.log('[updater] Update downloaded:', info.version);
-  if (mainWindow) {
-    mainWindow.webContents.send('update-downloaded', info);
-  }
-});
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('[updater] Update downloaded:', info.version);
+    if (mainWindow) {
+      mainWindow.webContents.send('update-downloaded', info);
+    }
+  });
+  
+  console.log('[updater] electron-updater loaded successfully');
+} catch (err) {
+  console.warn('[updater] electron-updater not available:', err.message);
+  console.warn('[updater] Auto-update functionality will be disabled. Run "npm install" to enable it.');
+}
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -167,6 +177,9 @@ ipcMain.handle('unwatch-dir', (event, dirPath) => {
 
 // Auto-updater IPC handlers
 ipcMain.handle('check-for-updates', async () => {
+  if (!autoUpdater) {
+    return { error: 'electron-updater not available. Run "npm install" to enable auto-update.' };
+  }
   try {
     return await autoUpdater.checkForUpdates();
   } catch (err) {
@@ -176,6 +189,9 @@ ipcMain.handle('check-for-updates', async () => {
 });
 
 ipcMain.handle('download-update', async () => {
+  if (!autoUpdater) {
+    return { error: 'electron-updater not available. Run "npm install" to enable auto-update.' };
+  }
   try {
     return await autoUpdater.downloadUpdate();
   } catch (err) {
@@ -185,6 +201,9 @@ ipcMain.handle('download-update', async () => {
 });
 
 ipcMain.handle('install-update', () => {
+  if (!autoUpdater) {
+    return { error: 'electron-updater not available. Run "npm install" to enable auto-update.' };
+  }
   autoUpdater.quitAndInstall(false, true);
 });
 
@@ -199,16 +218,18 @@ app.whenReady().then(async () => {
   await createWindow();
   
   // Check for updates after window is created (in production only)
-  if (!app.isPackaged) {
-    console.log('[updater] Skipping update check in development mode');
-  } else {
-    // Wait a bit for the window to fully load before checking
-    setTimeout(() => {
-      console.log('[updater] Checking for updates on startup...');
-      autoUpdater.checkForUpdates().catch(err => {
-        console.error('[updater] Startup check failed:', err);
-      });
-    }, 3000);
+  if (autoUpdater) {
+    if (!app.isPackaged) {
+      console.log('[updater] Skipping update check in development mode');
+    } else {
+      // Wait a bit for the window to fully load before checking
+      setTimeout(() => {
+        console.log('[updater] Checking for updates on startup...');
+        autoUpdater.checkForUpdates().catch(err => {
+          console.error('[updater] Startup check failed:', err);
+        });
+      }, 3000);
+    }
   }
   
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
