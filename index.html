@@ -44,6 +44,22 @@
         </div>
       </header>
 
+      <!-- Update notification banner -->
+      <div id="updateNotification" class="update-notification" style="display:none;">
+        <div class="update-content">
+          <span id="updateMessage">检查更新中...</span>
+          <div class="update-actions">
+            <button id="downloadUpdateBtn" class="btn subtle" style="display:none;">下载更新</button>
+            <button id="installUpdateBtn" class="btn" style="display:none;">安装并重启</button>
+            <button id="dismissUpdateBtn" class="btn subtle">关闭</button>
+          </div>
+        </div>
+        <div id="updateProgress" class="update-progress" style="display:none;">
+          <div id="updateProgressBar" class="update-progress-bar"></div>
+          <span id="updateProgressText">0%</span>
+        </div>
+      </div>
+
       <div class="controls-row">
         <button id="chooseDir" class="btn">选择 / 更换 文件夹</button>
         <button id="refreshBtn" class="btn subtle">刷新目录</button>

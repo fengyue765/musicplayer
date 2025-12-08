@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Local music player (Electron)",
   "main": "electron-main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fengyue765/musicplayer.git"
+  },
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder",
@@ -14,6 +18,11 @@
     "appId": "com.fengyue.musicplayer",
     "productName": "MusicPlayer",
     "icon": "build/icons",
+    "publish": {
+      "provider": "github",
+      "owner": "fengyue765",
+      "repo": "musicplayer"
+    },
     "files": [
       "**/*",
       "!node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}"
@@ -38,12 +47,14 @@
       "target": [
         "AppImage"
       ],
-      "artifactName": "MusicPlayer-${version}-linux.${ext}"
+      "artifactName": "MusicPlayer-${version}-linux.${ext}",
+      "category": "AudioVideo"
     }
   },
   "dependencies": {
     "chokidar": "^3.5.3",
-    "electron-store": "^8.1.0"
+    "electron-store": "^8.1.0",
+    "electron-updater": "^6.6.2"
   },
   "devDependencies": {
     "electron": "^25.3.0",

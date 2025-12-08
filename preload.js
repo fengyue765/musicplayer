@@ -21,5 +21,33 @@ contextBridge.exposeInMainWorld('api', {
   },
   getFileUrl: (filePath) => {
     try { return pathToFileURL(filePath).href; } catch (e) { return 'file://' + filePath; }
+  },
+  // Auto-updater API
+  checkForUpdates: async () => {
+    return await ipcRenderer.invoke('check-for-updates');
+  },
+  downloadUpdate: async () => {
+    return await ipcRenderer.invoke('download-update');
+  },
+  installUpdate: async () => {
+    return await ipcRenderer.invoke('install-update');
+  },
+  onUpdateChecking: (cb) => {
+    ipcRenderer.on('update-checking', () => cb());
+  },
+  onUpdateAvailable: (cb) => {
+    ipcRenderer.on('update-available', (ev, info) => cb(info));
+  },
+  onUpdateNotAvailable: (cb) => {
+    ipcRenderer.on('update-not-available', (ev, info) => cb(info));
+  },
+  onUpdateError: (cb) => {
+    ipcRenderer.on('update-error', (ev, err) => cb(err));
+  },
+  onUpdateDownloadProgress: (cb) => {
+    ipcRenderer.on('update-download-progress', (ev, progress) => cb(progress));
+  },
+  onUpdateDownloaded: (cb) => {
+    ipcRenderer.on('update-downloaded', (ev, info) => cb(info));
   }
 });

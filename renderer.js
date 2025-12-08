@@ -27,6 +27,16 @@ const sortSelect = document.getElementById('sortSelect');
 const sortDirBtn = document.getElementById('sortDirBtn');
 const autoNormalizeCheckbox = document.getElementById('autoNormalize');
 
+/* Update notification DOM refs */
+const updateNotification = document.getElementById('updateNotification');
+const updateMessage = document.getElementById('updateMessage');
+const downloadUpdateBtn = document.getElementById('downloadUpdateBtn');
+const installUpdateBtn = document.getElementById('installUpdateBtn');
+const dismissUpdateBtn = document.getElementById('dismissUpdateBtn');
+const updateProgress = document.getElementById('updateProgress');
+const updateProgressBar = document.getElementById('updateProgressBar');
+const updateProgressText = document.getElementById('updateProgressText');
+
 /* State */
 let playlist = []; // items: { name, path?, url?, fileHandle?, size, id, _objectUrl }
 let currentIndex = -1;
@@ -602,6 +612,88 @@ if (autoNormalizeCheckbox) {
 /* initial apply */
 applyUIStateToDom();
 renderPlaylist();
+
+/* Auto-updater UI handlers (Electron only) */
+if (hasElectronApi && window.api.checkForUpdates) {
+  // Setup update event listeners
+  window.api.onUpdateChecking(() => {
+    console.log('[renderer] Checking for updates...');
+    updateMessage.textContent = '正在检查更新...';
+    updateNotification.style.display = 'block';
+    downloadUpdateBtn.style.display = 'none';
+    installUpdateBtn.style.display = 'none';
+    updateProgress.style.display = 'none';
+  });
+
+  window.api.onUpdateAvailable((info) => {
+    console.log('[renderer] Update available:', info.version);
+    updateMessage.textContent = `发现新版本 ${info.version}！`;
+    downloadUpdateBtn.style.display = 'inline-block';
+    installUpdateBtn.style.display = 'none';
+    updateProgress.style.display = 'none';
+  });
+
+  window.api.onUpdateNotAvailable((info) => {
+    console.log('[renderer] No update available. Current version:', info.version);
+    updateMessage.textContent = '已是最新版本';
+    downloadUpdateBtn.style.display = 'none';
+    installUpdateBtn.style.display = 'none';
+    updateProgress.style.display = 'none';
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+      updateNotification.style.display = 'none';
+    }, 3000);
+  });
+
+  window.api.onUpdateError((err) => {
+    console.error('[renderer] Update error:', err);
+    updateMessage.textContent = '检查更新失败：' + (err.message || '未知错误');
+    downloadUpdateBtn.style.display = 'none';
+    installUpdateBtn.style.display = 'none';
+    updateProgress.style.display = 'none';
+  });
+
+  window.api.onUpdateDownloadProgress((progress) => {
+    console.log('[renderer] Download progress:', progress.percent);
+    updateProgress.style.display = 'block';
+    updateProgressBar.style.width = progress.percent + '%';
+    updateProgressText.textContent = Math.round(progress.percent) + '%';
+    updateMessage.textContent = `正在下载更新... (${(progress.transferred / 1024 / 1024).toFixed(1)}MB / ${(progress.total / 1024 / 1024).toFixed(1)}MB)`;
+  });
+
+  window.api.onUpdateDownloaded((info) => {
+    console.log('[renderer] Update downloaded:', info.version);
+    updateMessage.textContent = `新版本 ${info.version} 已下载完成！`;
+    downloadUpdateBtn.style.display = 'none';
+    installUpdateBtn.style.display = 'inline-block';
+    updateProgress.style.display = 'none';
+  });
+
+  // Button handlers
+  downloadUpdateBtn.onclick = async () => {
+    console.log('[renderer] Downloading update...');
+    updateMessage.textContent = '开始下载更新...';
+    downloadUpdateBtn.disabled = true;
+    downloadUpdateBtn.textContent = '下载中...';
+    try {
+      await window.api.downloadUpdate();
+    } catch (err) {
+      console.error('[renderer] Download failed:', err);
+      updateMessage.textContent = '下载失败：' + (err.message || '未知错误');
+      downloadUpdateBtn.disabled = false;
+      downloadUpdateBtn.textContent = '重试下载';
+    }
+  };
+
+  installUpdateBtn.onclick = () => {
+    console.log('[renderer] Installing update...');
+    window.api.installUpdate();
+  };
+
+  dismissUpdateBtn.onclick = () => {
+    updateNotification.style.display = 'none';
+  };
+}
 
 /* Expose internals for debugging */
 window.__player = {
