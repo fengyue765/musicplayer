@@ -221,7 +221,8 @@ function applyCombinedGain(normalizeGain, manualVolumeDb) {
   const ok = ensureAudioGraph(audio);
   if (!ok) return;
   
-  // Convert manual volume from dB to linear gain
+  // Convert dB to linear gain: gain = 10^(dB/20)
+  // This is the inverse of dB = 20*log10(gain)
   const manualGainLinear = Math.pow(10, manualVolumeDb / 20);
   
   // Combine auto-normalize gain with manual volume adjustment
@@ -289,7 +290,7 @@ function updateManualVolume(volumeDb) {
 function loadManualVolumeForTrack(track) {
   const id = getTrackId(track);
   const s = stats[id] || {};
-  const volumeDb = (typeof s.manualVolumeDb === 'number') ? s.manualVolumeDb : 0;
+  const volumeDb = s.manualVolumeDb ?? 0;
   
   currentManualVolumeDb = volumeDb;
   manualVolumeSlider.value = volumeDb;
