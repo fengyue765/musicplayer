@@ -27,6 +27,11 @@ const sortSelect = document.getElementById('sortSelect');
 const sortDirBtn = document.getElementById('sortDirBtn');
 const autoNormalizeCheckbox = document.getElementById('autoNormalize');
 
+/* Manual volume control DOM refs */
+const manualVolumeSlider = document.getElementById('manualVolume');
+const volumeValueDisplay = document.getElementById('volumeValue');
+const resetVolumeBtn = document.getElementById('resetVolume');
+
 /* Update notification DOM refs */
 const updateNotification = document.getElementById('updateNotification');
 const updateMessage = document.getElementById('updateMessage');
@@ -49,6 +54,7 @@ let uiState = loadUIState();
 let stats = loadStats();
 let sessionActive = false;
 let sessionIndex = -1;
+let currentManualVolumeDb = 0; // Current manual volume adjustment in dB
 
 /* Compatibility shim */
 const hasElectronApi = typeof window !== 'undefined' && window.api && typeof window.api.chooseDirectory === 'function';
@@ -66,7 +72,7 @@ function getTrackId(track){
 }
 function ensureStatsForTrack(track){
   const id = getTrackId(track);
-  if (!stats[id]) stats[id] = { playCount:0, skipCount:0, sessionCount:0, completionSum:0, normalizeGain:null, loudnessDb:null };
+  if (!stats[id]) stats[id] = { playCount:0, skipCount:0, sessionCount:0, completionSum:0, normalizeGain:null, loudnessDb:null, manualVolumeDb:0 };
   return stats[id];
 }
 function persistStats(){ saveStats(stats); }
@@ -211,25 +217,85 @@ function generateWeightedOrder(startIndex = null){
 }
 
 /* Normalization plumbing */
-function onTrackLoadedApplyNormalize(track){
-  if (!uiState.autoNormalize) return;
+function applyCombinedGain(normalizeGain, manualVolumeDb) {
   const ok = ensureAudioGraph(audio);
   if (!ok) return;
+  
+  // Convert manual volume from dB to linear gain
+  const manualGainLinear = Math.pow(10, manualVolumeDb / 20);
+  
+  // Combine auto-normalize gain with manual volume adjustment
+  const combinedGain = normalizeGain * manualGainLinear;
+  
+  applyGainSmooth(combinedGain);
+}
+
+function onTrackLoadedApplyNormalize(track){
+  const ok = ensureAudioGraph(audio);
+  if (!ok) return;
+  
   const id = getTrackId(track);
   const s = stats[id] || {};
-  if (s.normalizeGain != null){
-    applyGainSmooth(s.normalizeGain);
-    return;
+  
+  // Get the base normalize gain (either from stats or 1.0 if auto-normalize is off)
+  let normalizeGain = 1.0;
+  if (uiState.autoNormalize && s.normalizeGain != null) {
+    normalizeGain = s.normalizeGain;
+    applyCombinedGain(normalizeGain, currentManualVolumeDb);
+  } else if (uiState.autoNormalize && s.normalizeGain == null) {
+    // Need to analyze first
+    analyzeAndCacheNormalize(track, stats).then(res=>{
+      if (!res) return;
+      persistStats();
+      if (currentIndex !== -1 && getTrackId(playlist[currentIndex]) === id){
+        applyCombinedGain(res.normalizeGain, currentManualVolumeDb);
+      }
+    }).catch(e=>{
+      console.warn('normalize analyze error', e);
+    });
+    // Apply manual volume with default gain in the meantime
+    applyCombinedGain(1.0, currentManualVolumeDb);
+  } else {
+    // Auto-normalize is off, just apply manual volume
+    applyCombinedGain(1.0, currentManualVolumeDb);
   }
-  analyzeAndCacheNormalize(track, stats).then(res=>{
-    if (!res) return;
+}
+
+function updateManualVolume(volumeDb) {
+  currentManualVolumeDb = volumeDb;
+  
+  // Save to current track stats
+  if (currentIndex !== -1 && playlist[currentIndex]) {
+    const track = playlist[currentIndex];
+    const s = ensureStatsForTrack(track);
+    s.manualVolumeDb = volumeDb;
     persistStats();
-    if (currentIndex !== -1 && getTrackId(playlist[currentIndex]) === id){
-      applyGainSmooth(res.normalizeGain);
-    }
-  }).catch(e=>{
-    console.warn('normalize analyze error', e);
-  });
+  }
+  
+  // Apply the new volume
+  if (currentIndex !== -1 && playlist[currentIndex]) {
+    const track = playlist[currentIndex];
+    const id = getTrackId(track);
+    const s = stats[id] || {};
+    const normalizeGain = (uiState.autoNormalize && s.normalizeGain != null) ? s.normalizeGain : 1.0;
+    applyCombinedGain(normalizeGain, volumeDb);
+  }
+  
+  // Update UI
+  const sign = volumeDb >= 0 ? '+' : '';
+  volumeValueDisplay.textContent = `${sign}${volumeDb.toFixed(1)} dB`;
+}
+
+function loadManualVolumeForTrack(track) {
+  const id = getTrackId(track);
+  const s = stats[id] || {};
+  const volumeDb = (typeof s.manualVolumeDb === 'number') ? s.manualVolumeDb : 0;
+  
+  currentManualVolumeDb = volumeDb;
+  manualVolumeSlider.value = volumeDb;
+  
+  const sign = volumeDb >= 0 ? '+' : '';
+  volumeValueDisplay.textContent = `${sign}${volumeDb.toFixed(1)} dB`;
 }
 
 /* Load / play control (adapted for Electron: path -> file:// via window.api.getFileUrl) */
@@ -256,6 +322,11 @@ async function loadTrack(idx){
   }
   currentTitle.textContent = item.name;
   renderPlaylist();
+  
+  // Load manual volume for this track
+  loadManualVolumeForTrack(item);
+  
+  // Apply normalization and manual volume
   onTrackLoadedApplyNormalize(item);
 }
 
@@ -604,9 +675,26 @@ if (autoNormalizeCheckbox) {
   autoNormalizeCheckbox.onchange = ()=>{
     uiState.autoNormalize = !!autoNormalizeCheckbox.checked;
     saveUIState(uiState);
-    if (!uiState.autoNormalize) { try { applyGainSmooth(1.0); } catch(e){} } else { if (currentIndex !== -1) onTrackLoadedApplyNormalize(playlist[currentIndex]); }
+    if (currentIndex !== -1) {
+      onTrackLoadedApplyNormalize(playlist[currentIndex]);
+    }
   };
   autoNormalizeCheckbox.checked = !!uiState.autoNormalize;
+}
+
+/* Manual volume control handlers */
+if (manualVolumeSlider) {
+  manualVolumeSlider.oninput = () => {
+    const volumeDb = parseFloat(manualVolumeSlider.value);
+    updateManualVolume(volumeDb);
+  };
+}
+
+if (resetVolumeBtn) {
+  resetVolumeBtn.onclick = () => {
+    manualVolumeSlider.value = 0;
+    updateManualVolume(0);
+  };
 }
 
 /* initial apply */

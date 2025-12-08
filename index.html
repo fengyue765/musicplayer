@@ -91,6 +91,19 @@
         <span id="time" class="time">0:00 / 0:00</span>
       </div>
 
+      <!-- Manual volume control -->
+      <div class="volume-control">
+        <label for="manualVolume" class="volume-label">
+          <i class="ri-volume-down-line"></i>
+          手动音量
+        </label>
+        <input id="manualVolume" type="range" min="-12" max="12" value="0" step="0.5" class="volume-slider" />
+        <span id="volumeValue" class="volume-value">0 dB</span>
+        <button id="resetVolume" class="btn subtle small-btn" title="重置音量">
+          <i class="ri-restart-line"></i>
+        </button>
+      </div>
+
       <!-- Playlist header: 折叠 / 定位 / 排序 -->
       <div class="playlist-header">
         <div class="playlist-title">播放列表</div>
