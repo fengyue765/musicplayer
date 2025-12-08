@@ -124,7 +124,7 @@ function renderPlaylist(){
       }
       await loadTrack(i);
       play();
-      // Don't auto-locate/scroll when clicking on playlist item - user is already viewing it
+      // Skip locateCurrentInPlaylist() when user directly clicks playlist item to avoid redundant scrolling
     };
     playlistEl.appendChild(div);
   }
