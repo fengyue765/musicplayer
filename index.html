@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>本地文件音乐播放器</title>
+  <!-- RemixIcon CDN -->
+  <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
   <!-- 分拆后的样式文件 -->
   <link rel="stylesheet" href="styles/theme.css" />
   <link rel="stylesheet" href="styles/layout.css" />
@@ -44,6 +46,22 @@
         </div>
       </header>
 
+      <!-- Update notification banner -->
+      <div id="updateNotification" class="update-notification" style="display:none;">
+        <div class="update-content">
+          <span id="updateMessage">检查更新中...</span>
+          <div class="update-actions">
+            <button id="downloadUpdateBtn" class="btn subtle" style="display:none;">下载更新</button>
+            <button id="installUpdateBtn" class="btn" style="display:none;">安装并重启</button>
+            <button id="dismissUpdateBtn" class="btn subtle">关闭</button>
+          </div>
+        </div>
+        <div id="updateProgress" class="update-progress" style="display:none;">
+          <div id="updateProgressBar" class="update-progress-bar"></div>
+          <span id="updateProgressText">0%</span>
+        </div>
+      </div>
+
       <div class="controls-row">
         <button id="chooseDir" class="btn">选择 / 更换 文件夹</button>
         <button id="refreshBtn" class="btn subtle">刷新目录</button>
@@ -54,8 +72,8 @@
             <input id="autoNormalize" type="checkbox" />
             自动均衡
           </label>
-          <button id="shuffleBtn" class="icon-btn" title="随机播放">🔀</button>
-          <button id="repeatBtn" class="icon-btn" title="单曲循环">🔁</button>
+          <button id="shuffleBtn" class="icon-btn" title="随机播放"><i class="ri-shuffle-line"></i></button>
+          <button id="repeatBtn" class="icon-btn" title="单曲循环"><i class="ri-repeat-one-line"></i></button>
         </div>
       </div>
 
@@ -66,11 +84,24 @@
       <audio id="audio" preload="metadata"></audio>
 
       <div class="controls">
-        <button id="prev" class="control">⏮</button>
-        <button id="play" class="control large">▶️</button>
-        <button id="next" class="control">⏭</button>
+        <button id="prev" class="control"><i class="ri-skip-back-mini-fill"></i></button>
+        <button id="play" class="control large"><i class="ri-play-fill"></i></button>
+        <button id="next" class="control"><i class="ri-skip-forward-mini-fill"></i></button>
         <input id="seek" type="range" min="0" max="100" value="0" />
         <span id="time" class="time">0:00 / 0:00</span>
+      </div>
+
+      <!-- Manual volume control -->
+      <div class="volume-control">
+        <label for="manualVolume" class="volume-label">
+          <i class="ri-volume-down-line"></i>
+          手动音量
+        </label>
+        <input id="manualVolume" type="range" min="-12" max="12" value="0" step="0.5" class="volume-slider" />
+        <span id="volumeValue" class="volume-value">0 dB</span>
+        <button id="resetVolume" class="btn subtle small-btn" title="重置音量">
+          <i class="ri-restart-line"></i>
+        </button>
       </div>
 
       <!-- Playlist header: 折叠 / 定位 / 排序 -->

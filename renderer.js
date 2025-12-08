@@ -27,6 +27,21 @@ const sortSelect = document.getElementById('sortSelect');
 const sortDirBtn = document.getElementById('sortDirBtn');
 const autoNormalizeCheckbox = document.getElementById('autoNormalize');
 
+/* Manual volume control DOM refs */
+const manualVolumeSlider = document.getElementById('manualVolume');
+const volumeValueDisplay = document.getElementById('volumeValue');
+const resetVolumeBtn = document.getElementById('resetVolume');
+
+/* Update notification DOM refs */
+const updateNotification = document.getElementById('updateNotification');
+const updateMessage = document.getElementById('updateMessage');
+const downloadUpdateBtn = document.getElementById('downloadUpdateBtn');
+const installUpdateBtn = document.getElementById('installUpdateBtn');
+const dismissUpdateBtn = document.getElementById('dismissUpdateBtn');
+const updateProgress = document.getElementById('updateProgress');
+const updateProgressBar = document.getElementById('updateProgressBar');
+const updateProgressText = document.getElementById('updateProgressText');
+
 /* State */
 let playlist = []; // items: { name, path?, url?, fileHandle?, size, id, _objectUrl }
 let currentIndex = -1;
@@ -39,6 +54,7 @@ let uiState = loadUIState();
 let stats = loadStats();
 let sessionActive = false;
 let sessionIndex = -1;
+let currentManualVolumeDb = 0; // Current manual volume adjustment in dB
 
 /* Compatibility shim */
 const hasElectronApi = typeof window !== 'undefined' && window.api && typeof window.api.chooseDirectory === 'function';
@@ -56,7 +72,7 @@ function getTrackId(track){
 }
 function ensureStatsForTrack(track){
   const id = getTrackId(track);
-  if (!stats[id]) stats[id] = { playCount:0, skipCount:0, sessionCount:0, completionSum:0, normalizeGain:null, loudnessDb:null };
+  if (!stats[id]) stats[id] = { playCount:0, skipCount:0, sessionCount:0, completionSum:0, normalizeGain:null, loudnessDb:null, manualVolumeDb:0 };
   return stats[id];
 }
 function persistStats(){ saveStats(stats); }
@@ -98,7 +114,14 @@ function renderPlaylist(){
     const avg = st.sessionCount ? (st.completionSum / st.sessionCount) : 0;
     const percent = st.sessionCount ? Math.round(avg*100) : '-';
     const loud = (typeof st.loudnessDb === 'number') ? `${Math.round(st.loudnessDb)}dB` : '';
-    right.textContent = `播放:${st.playCount||0}  切歌:${st.skipCount||0}  完播:${percent==='-'?'-':percent+'%'} ${loud}`;
+    // Calculate gain display in dB
+    let gainStr = '';
+    if (typeof st.normalizeGain === 'number') {
+      const gainDb = 20 * Math.log10(st.normalizeGain);
+      const sign = gainDb >= 0 ? '+' : '';
+      gainStr = `  增益:${sign}${gainDb.toFixed(1)}dB`;
+    }
+    right.textContent = `播放:${st.playCount||0}  切歌:${st.skipCount||0}  完播:${percent==='-'?'-':percent+'%'} ${loud}${gainStr}`;
     div.appendChild(left); div.appendChild(right);
     div.onclick = async ()=>{
       if (currentIndex !== -1 && currentIndex !== i && audio.currentTime > 1 && !audio.ended) {
@@ -107,7 +130,7 @@ function renderPlaylist(){
       }
       await loadTrack(i);
       play();
-      locateCurrentInPlaylist();
+      // Skip locateCurrentInPlaylist() when user directly clicks playlist item to avoid redundant scrolling
     };
     playlistEl.appendChild(div);
   }
@@ -194,25 +217,86 @@ function generateWeightedOrder(startIndex = null){
 }
 
 /* Normalization plumbing */
-function onTrackLoadedApplyNormalize(track){
-  if (!uiState.autoNormalize) return;
+function applyCombinedGain(normalizeGain, manualVolumeDb) {
   const ok = ensureAudioGraph(audio);
   if (!ok) return;
+  
+  // Convert dB to linear gain: gain = 10^(dB/20)
+  // This is the inverse of dB = 20*log10(gain)
+  const manualGainLinear = Math.pow(10, manualVolumeDb / 20);
+  
+  // Combine auto-normalize gain with manual volume adjustment
+  const combinedGain = normalizeGain * manualGainLinear;
+  
+  applyGainSmooth(combinedGain);
+}
+
+function onTrackLoadedApplyNormalize(track){
+  const ok = ensureAudioGraph(audio);
+  if (!ok) return;
+  
   const id = getTrackId(track);
   const s = stats[id] || {};
-  if (s.normalizeGain != null){
-    applyGainSmooth(s.normalizeGain);
-    return;
+  
+  // Get the base normalize gain (either from stats or 1.0 if auto-normalize is off)
+  let normalizeGain = 1.0;
+  if (uiState.autoNormalize && s.normalizeGain != null) {
+    normalizeGain = s.normalizeGain;
+    applyCombinedGain(normalizeGain, currentManualVolumeDb);
+  } else if (uiState.autoNormalize && s.normalizeGain == null) {
+    // Need to analyze first
+    analyzeAndCacheNormalize(track, stats).then(res=>{
+      if (!res) return;
+      persistStats();
+      if (currentIndex !== -1 && getTrackId(playlist[currentIndex]) === id){
+        applyCombinedGain(res.normalizeGain, currentManualVolumeDb);
+      }
+    }).catch(e=>{
+      console.warn('normalize analyze error', e);
+    });
+    // Apply manual volume with default gain in the meantime
+    applyCombinedGain(1.0, currentManualVolumeDb);
+  } else {
+    // Auto-normalize is off, just apply manual volume
+    applyCombinedGain(1.0, currentManualVolumeDb);
   }
-  analyzeAndCacheNormalize(track, stats).then(res=>{
-    if (!res) return;
+}
+
+function updateManualVolume(volumeDb) {
+  currentManualVolumeDb = volumeDb;
+  
+  // Save to current track stats
+  if (currentIndex !== -1 && playlist[currentIndex]) {
+    const track = playlist[currentIndex];
+    const s = ensureStatsForTrack(track);
+    s.manualVolumeDb = volumeDb;
     persistStats();
-    if (currentIndex !== -1 && getTrackId(playlist[currentIndex]) === id){
-      applyGainSmooth(res.normalizeGain);
-    }
-  }).catch(e=>{
-    console.warn('normalize analyze error', e);
-  });
+  }
+  
+  // Apply the new volume
+  if (currentIndex !== -1 && playlist[currentIndex]) {
+    const track = playlist[currentIndex];
+    const id = getTrackId(track);
+    const s = stats[id] || {};
+    const normalizeGain = (uiState.autoNormalize && s.normalizeGain != null) ? s.normalizeGain : 1.0;
+    applyCombinedGain(normalizeGain, volumeDb);
+  }
+  
+  // Update UI
+  const sign = volumeDb >= 0 ? '+' : '';
+  volumeValueDisplay.textContent = `${sign}${volumeDb.toFixed(1)} dB`;
+}
+
+function loadManualVolumeForTrack(track) {
+  const id = getTrackId(track);
+  const s = stats[id] || {};
+  const volumeDb = s.manualVolumeDb ?? 0;
+  
+  currentManualVolumeDb = volumeDb;
+  manualVolumeSlider.value = volumeDb;
+  
+  const sign = volumeDb >= 0 ? '+' : '';
+  volumeValueDisplay.textContent = `${sign}${volumeDb.toFixed(1)} dB`;
 }
 
 /* Load / play control (adapted for Electron: path -> file:// via window.api.getFileUrl) */
@@ -239,6 +323,11 @@ async function loadTrack(idx){
   }
   currentTitle.textContent = item.name;
   renderPlaylist();
+  
+  // Load manual volume for this track
+  loadManualVolumeForTrack(item);
+  
+  // Apply normalization and manual volume
   onTrackLoadedApplyNormalize(item);
 }
 
@@ -257,8 +346,8 @@ function play(){ if (currentIndex === -1 && playlist.length) preparePlayStart();
 function pause(){ audio.pause(); }
 
 playBtn.onclick = ()=>{ if (!audio.src && playlist.length) preparePlayStart(); if (audio.paused) play(); else pause(); };
-audio.onplay = ()=>{ playBtn.textContent = '⏸'; startSessionIfNeeded(); const ac = getAudioContext(); if (ac && ac.state === 'suspended') ac.resume().catch(()=>{}); };
-audio.onpause = ()=> playBtn.textContent = '▶️';
+audio.onplay = ()=>{ playBtn.innerHTML = '<i class="ri-pause-fill"></i>'; startSessionIfNeeded(); const ac = getAudioContext(); if (ac && ac.state === 'suspended') ac.resume().catch(()=>{}); };
+audio.onpause = ()=> playBtn.innerHTML = '<i class="ri-play-fill"></i>';
 audio.ontimeupdate = ()=>{ if (audio.duration) { seek.value = (audio.currentTime / audio.duration) * 100; timeEl.textContent = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`; } };
 seek.oninput = ()=>{ if (audio.duration) audio.currentTime = (seek.value/100) * audio.duration; };
 
@@ -270,19 +359,19 @@ prevBtn.onclick = ()=>{
       const idx = playOrder[orderPos];
       if (currentIndex !== -1 && audio.currentTime > 1 && !audio.ended) { finalizeSessionForIndex(currentIndex,false); incrementSkipCount(playlist[currentIndex]); }
       loadTrack(idx).then(()=> play());
-      locateCurrentInPlaylist();
+      locateCurrentInPlaylist(); // scroll if expanded, don't auto-expand
     } else {
       orderPos = Math.max(0, playOrder.length - 1);
       const idx = playOrder[orderPos];
       if (currentIndex !== -1 && audio.currentTime > 1 && !audio.ended) { finalizeSessionForIndex(currentIndex,false); incrementSkipCount(playlist[currentIndex]); }
       loadTrack(idx).then(()=> play());
-      locateCurrentInPlaylist();
+      locateCurrentInPlaylist(); // scroll if expanded, don't auto-expand
     }
   } else {
     const prevIdx = (currentIndex - 1 + playlist.length) % playlist.length;
     if (currentIndex !== -1 && audio.currentTime > 1 && !audio.ended){ finalizeSessionForIndex(currentIndex,false); incrementSkipCount(playlist[currentIndex]); }
     loadTrack(prevIdx).then(()=> play());
-    locateCurrentInPlaylist();
+    locateCurrentInPlaylist(); // scroll if expanded, don't auto-expand
   }
 };
 
@@ -318,11 +407,11 @@ function gotoNext(){
     }
     const idx = playOrder[orderPos];
     loadTrack(idx).then(()=> play());
-    locateCurrentInPlaylist();
+    locateCurrentInPlaylist(); // scroll if expanded, don't auto-expand
   } else {
     const nextIdx = (currentIndex + 1) % playlist.length;
     loadTrack(nextIdx).then(()=> play());
-    locateCurrentInPlaylist();
+    locateCurrentInPlaylist(); // scroll if expanded, don't auto-expand
   }
 }
 
@@ -480,7 +569,7 @@ async function refreshDirectory(){
         playOrder = generateWeightedOrder(currentIndex >= 0 ? currentIndex : 0);
         orderPos = Math.max(0, playOrder.indexOf(currentIndex >= 0 ? currentIndex : playOrder[0]));
       }
-      if (newCurrentIndex !== -1){ await loadTrack(newCurrentIndex); if (!audio.paused) play(); locateCurrentInPlaylist(); }
+      if (newCurrentIndex !== -1){ await loadTrack(newCurrentIndex); if (!audio.paused) play(); locateCurrentInPlaylist(); } // scroll if expanded, don't auto-expand
       else { if (currentIndex !== -1) { finalizeSessionForIndex(currentIndex,false); audio.pause(); currentIndex = -1; currentTitle.textContent = '（当前曲目已被删除或移动）'; } if (playlist.length) await loadTrack(0); }
       renderPlaylist(); dirStatus.textContent = `刷新完成。新增 ${added.length} / 删除 ${removed.length}。共 ${playlist.length} 首。`;
     } else {
@@ -565,8 +654,19 @@ function applyUIStateToDom(){
   if (autoNormalizeCheckbox) autoNormalizeCheckbox.checked = !!uiState.autoNormalize;
 }
 togglePlaylistBtn.onclick = ()=>{ uiState.playlistCollapsed = !uiState.playlistCollapsed; saveUIState(uiState); applyUIStateToDom(); renderPlaylist(); };
-locateBtn.onclick = ()=> locateCurrentInPlaylist();
-function locateCurrentInPlaylist(){ if (currentIndex === -1) return; if (uiState.playlistCollapsed) { uiState.playlistCollapsed = false; saveUIState(uiState); applyUIStateToDom(); requestAnimationFrame(()=> setTimeout(scrollToActiveItem, 180)); } else scrollToActiveItem(); }
+locateBtn.onclick = ()=> locateCurrentInPlaylist(true); // explicit user action to expand and locate
+function locateCurrentInPlaylist(shouldExpand = false){ 
+  if (currentIndex === -1) return; 
+  if (shouldExpand && uiState.playlistCollapsed) { 
+    uiState.playlistCollapsed = false; 
+    saveUIState(uiState); 
+    applyUIStateToDom(); 
+    requestAnimationFrame(()=> setTimeout(scrollToActiveItem, 180)); 
+  } else if (!uiState.playlistCollapsed) {
+    scrollToActiveItem(); 
+  }
+  // If collapsed and shouldExpand is false, do nothing (don't auto-expand)
+}
 function scrollToActiveItem(){ const selector = `.item[data-index="${currentIndex}"]`; const el = playlistEl.querySelector(selector); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('locate-highlight'); setTimeout(()=> el.classList.remove('locate-highlight'), 2000); }
 
 /* sort controls / autoNormalize */
@@ -576,14 +676,113 @@ if (autoNormalizeCheckbox) {
   autoNormalizeCheckbox.onchange = ()=>{
     uiState.autoNormalize = !!autoNormalizeCheckbox.checked;
     saveUIState(uiState);
-    if (!uiState.autoNormalize) { try { applyGainSmooth(1.0); } catch(e){} } else { if (currentIndex !== -1) onTrackLoadedApplyNormalize(playlist[currentIndex]); }
+    if (currentIndex !== -1) {
+      onTrackLoadedApplyNormalize(playlist[currentIndex]);
+    }
   };
   autoNormalizeCheckbox.checked = !!uiState.autoNormalize;
+}
+
+/* Manual volume control handlers */
+if (manualVolumeSlider) {
+  manualVolumeSlider.oninput = () => {
+    const volumeDb = parseFloat(manualVolumeSlider.value);
+    updateManualVolume(volumeDb);
+  };
+}
+
+if (resetVolumeBtn) {
+  resetVolumeBtn.onclick = () => {
+    manualVolumeSlider.value = 0;
+    updateManualVolume(0);
+  };
 }
 
 /* initial apply */
 applyUIStateToDom();
 renderPlaylist();
+
+/* Auto-updater UI handlers (Electron only) */
+if (hasElectronApi && window.api.checkForUpdates) {
+  // Setup update event listeners
+  window.api.onUpdateChecking(() => {
+    console.log('[renderer] Checking for updates...');
+    updateMessage.textContent = '正在检查更新...';
+    updateNotification.style.display = 'block';
+    downloadUpdateBtn.style.display = 'none';
+    installUpdateBtn.style.display = 'none';
+    updateProgress.style.display = 'none';
+  });
+
+  window.api.onUpdateAvailable((info) => {
+    console.log('[renderer] Update available:', info.version);
+    updateMessage.textContent = `发现新版本 ${info.version}！`;
+    downloadUpdateBtn.style.display = 'inline-block';
+    installUpdateBtn.style.display = 'none';
+    updateProgress.style.display = 'none';
+  });
+
+  window.api.onUpdateNotAvailable((info) => {
+    console.log('[renderer] No update available. Current version:', info.version);
+    updateMessage.textContent = '已是最新版本';
+    downloadUpdateBtn.style.display = 'none';
+    installUpdateBtn.style.display = 'none';
+    updateProgress.style.display = 'none';
+    // Auto-hide after 3 seconds
+    setTimeout(() => {
+      updateNotification.style.display = 'none';
+    }, 3000);
+  });
+
+  window.api.onUpdateError((err) => {
+    console.error('[renderer] Update error:', err);
+    updateMessage.textContent = '检查更新失败：' + (err.message || '未知错误');
+    downloadUpdateBtn.style.display = 'none';
+    installUpdateBtn.style.display = 'none';
+    updateProgress.style.display = 'none';
+  });
+
+  window.api.onUpdateDownloadProgress((progress) => {
+    console.log('[renderer] Download progress:', progress.percent);
+    updateProgress.style.display = 'block';
+    updateProgressBar.style.width = progress.percent + '%';
+    updateProgressText.textContent = Math.round(progress.percent) + '%';
+    updateMessage.textContent = `正在下载更新... (${(progress.transferred / 1024 / 1024).toFixed(1)}MB / ${(progress.total / 1024 / 1024).toFixed(1)}MB)`;
+  });
+
+  window.api.onUpdateDownloaded((info) => {
+    console.log('[renderer] Update downloaded:', info.version);
+    updateMessage.textContent = `新版本 ${info.version} 已下载完成！`;
+    downloadUpdateBtn.style.display = 'none';
+    installUpdateBtn.style.display = 'inline-block';
+    updateProgress.style.display = 'none';
+  });
+
+  // Button handlers
+  downloadUpdateBtn.onclick = async () => {
+    console.log('[renderer] Downloading update...');
+    updateMessage.textContent = '开始下载更新...';
+    downloadUpdateBtn.disabled = true;
+    downloadUpdateBtn.textContent = '下载中...';
+    try {
+      await window.api.downloadUpdate();
+    } catch (err) {
+      console.error('[renderer] Download failed:', err);
+      updateMessage.textContent = '下载失败：' + (err.message || '未知错误');
+      downloadUpdateBtn.disabled = false;
+      downloadUpdateBtn.textContent = '重试下载';
+    }
+  };
+
+  installUpdateBtn.onclick = () => {
+    console.log('[renderer] Installing update...');
+    window.api.installUpdate();
+  };
+
+  dismissUpdateBtn.onclick = () => {
+    updateNotification.style.display = 'none';
+  };
+}
 
 /* Expose internals for debugging */
 window.__player = {

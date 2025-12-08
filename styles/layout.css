@@ -18,3 +18,48 @@
 .logo-dot.cream{ background:var(--accent-cream); }
 .player-head h1{ margin:0; font-size:1.15rem; line-height:1; }
 .subtitle{ margin:2px 0 0 0; color:var(--muted); font-size:0.9rem; }
+
+/* Update notification banner */
+.update-notification {
+  background: linear-gradient(180deg, #FFF8FB, #FFF5FC);
+  border: 1px solid rgba(236,210,235,0.6);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 12px rgba(220,190,210,0.15);
+}
+.update-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.update-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.update-progress {
+  margin-top: 10px;
+  position: relative;
+  height: 24px;
+  background: rgba(240,230,240,0.4);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.update-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-purple), var(--accent-pink));
+  transition: width 0.3s ease;
+  width: 0%;
+}
+.update-progress-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
