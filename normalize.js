@@ -1,9 +1,9 @@
 // normalize.js — analyze audio loudness (RMS) and compute normalize gain; caches to stats object
 import { getAudioContext } from './audioGraph.js';
 
-const TARGET_DB = -20;
-const MIN_GAIN = 0.5;
-const MAX_GAIN = 2.5;
+const TARGET_DB = -10;
+const MIN_GAIN = 0.2;
+const MAX_GAIN = 4.0;
 
 function computeRmsDbFromAudioBuffer(audioBuffer){
   const channelCount = audioBuffer.numberOfChannels;

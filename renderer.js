@@ -98,7 +98,14 @@ function renderPlaylist(){
     const avg = st.sessionCount ? (st.completionSum / st.sessionCount) : 0;
     const percent = st.sessionCount ? Math.round(avg*100) : '-';
     const loud = (typeof st.loudnessDb === 'number') ? `${Math.round(st.loudnessDb)}dB` : '';
-    right.textContent = `播放:${st.playCount||0}  切歌:${st.skipCount||0}  完播:${percent==='-'?'-':percent+'%'} ${loud}`;
+    // Calculate gain display in dB
+    let gainStr = '';
+    if (typeof st.normalizeGain === 'number') {
+      const gainDb = 20 * Math.log10(st.normalizeGain);
+      const sign = gainDb >= 0 ? '+' : '';
+      gainStr = `  增益:${sign}${gainDb.toFixed(1)}dB`;
+    }
+    right.textContent = `播放:${st.playCount||0}  切歌:${st.skipCount||0}  完播:${percent==='-'?'-':percent+'%'} ${loud}${gainStr}`;
     div.appendChild(left); div.appendChild(right);
     div.onclick = async ()=>{
       if (currentIndex !== -1 && currentIndex !== i && audio.currentTime > 1 && !audio.ended) {
@@ -107,7 +114,7 @@ function renderPlaylist(){
       }
       await loadTrack(i);
       play();
-      locateCurrentInPlaylist();
+      // Don't auto-locate/scroll when clicking on playlist item - user is already viewing it
     };
     playlistEl.appendChild(div);
   }
@@ -270,19 +277,19 @@ prevBtn.onclick = ()=>{
       const idx = playOrder[orderPos];
       if (currentIndex !== -1 && audio.currentTime > 1 && !audio.ended) { finalizeSessionForIndex(currentIndex,false); incrementSkipCount(playlist[currentIndex]); }
       loadTrack(idx).then(()=> play());
-      locateCurrentInPlaylist();
+      locateCurrentInPlaylist(); // scroll if expanded, don't auto-expand
     } else {
       orderPos = Math.max(0, playOrder.length - 1);
       const idx = playOrder[orderPos];
       if (currentIndex !== -1 && audio.currentTime > 1 && !audio.ended) { finalizeSessionForIndex(currentIndex,false); incrementSkipCount(playlist[currentIndex]); }
       loadTrack(idx).then(()=> play());
-      locateCurrentInPlaylist();
+      locateCurrentInPlaylist(); // scroll if expanded, don't auto-expand
     }
   } else {
     const prevIdx = (currentIndex - 1 + playlist.length) % playlist.length;
     if (currentIndex !== -1 && audio.currentTime > 1 && !audio.ended){ finalizeSessionForIndex(currentIndex,false); incrementSkipCount(playlist[currentIndex]); }
     loadTrack(prevIdx).then(()=> play());
-    locateCurrentInPlaylist();
+    locateCurrentInPlaylist(); // scroll if expanded, don't auto-expand
   }
 };
 
@@ -318,11 +325,11 @@ function gotoNext(){
     }
     const idx = playOrder[orderPos];
     loadTrack(idx).then(()=> play());
-    locateCurrentInPlaylist();
+    locateCurrentInPlaylist(); // scroll if expanded, don't auto-expand
   } else {
     const nextIdx = (currentIndex + 1) % playlist.length;
     loadTrack(nextIdx).then(()=> play());
-    locateCurrentInPlaylist();
+    locateCurrentInPlaylist(); // scroll if expanded, don't auto-expand
   }
 }
 
@@ -480,7 +487,7 @@ async function refreshDirectory(){
         playOrder = generateWeightedOrder(currentIndex >= 0 ? currentIndex : 0);
         orderPos = Math.max(0, playOrder.indexOf(currentIndex >= 0 ? currentIndex : playOrder[0]));
       }
-      if (newCurrentIndex !== -1){ await loadTrack(newCurrentIndex); if (!audio.paused) play(); locateCurrentInPlaylist(); }
+      if (newCurrentIndex !== -1){ await loadTrack(newCurrentIndex); if (!audio.paused) play(); locateCurrentInPlaylist(); } // scroll if expanded, don't auto-expand
       else { if (currentIndex !== -1) { finalizeSessionForIndex(currentIndex,false); audio.pause(); currentIndex = -1; currentTitle.textContent = '（当前曲目已被删除或移动）'; } if (playlist.length) await loadTrack(0); }
       renderPlaylist(); dirStatus.textContent = `刷新完成。新增 ${added.length} / 删除 ${removed.length}。共 ${playlist.length} 首。`;
     } else {
@@ -565,8 +572,19 @@ function applyUIStateToDom(){
   if (autoNormalizeCheckbox) autoNormalizeCheckbox.checked = !!uiState.autoNormalize;
 }
 togglePlaylistBtn.onclick = ()=>{ uiState.playlistCollapsed = !uiState.playlistCollapsed; saveUIState(uiState); applyUIStateToDom(); renderPlaylist(); };
-locateBtn.onclick = ()=> locateCurrentInPlaylist();
-function locateCurrentInPlaylist(){ if (currentIndex === -1) return; if (uiState.playlistCollapsed) { uiState.playlistCollapsed = false; saveUIState(uiState); applyUIStateToDom(); requestAnimationFrame(()=> setTimeout(scrollToActiveItem, 180)); } else scrollToActiveItem(); }
+locateBtn.onclick = ()=> locateCurrentInPlaylist(true); // explicit user action to expand and locate
+function locateCurrentInPlaylist(shouldExpand = false){ 
+  if (currentIndex === -1) return; 
+  if (shouldExpand && uiState.playlistCollapsed) { 
+    uiState.playlistCollapsed = false; 
+    saveUIState(uiState); 
+    applyUIStateToDom(); 
+    requestAnimationFrame(()=> setTimeout(scrollToActiveItem, 180)); 
+  } else if (!uiState.playlistCollapsed) {
+    scrollToActiveItem(); 
+  }
+  // If collapsed and shouldExpand is false, do nothing (don't auto-expand)
+}
 function scrollToActiveItem(){ const selector = `.item[data-index="${currentIndex}"]`; const el = playlistEl.querySelector(selector); if (!el) return; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('locate-highlight'); setTimeout(()=> el.classList.remove('locate-highlight'), 2000); }
 
 /* sort controls / autoNormalize */
