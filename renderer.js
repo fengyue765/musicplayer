@@ -2,7 +2,7 @@
 // 说明：保留原有业务逻辑（shuffle/repeat/统计/normalize/render），并把目录访问替换为 window.api（preload）优先。
 // 如果在浏览器端运行，会回退到原生 showDirectoryPicker / file handles（假如存在）。
 
-import { loadStats, saveStats, loadUIState, saveUIState, idbPut, idbGet, idbDelete } from './storage.js';
+import { loadStats, saveStats, loadUIState, saveUIState, loadSessionState, saveSessionState, idbPut, idbGet, idbDelete } from './storage.js';
 import { ensureAudioGraph, applyGainSmooth, getAudioContext } from './audioGraph.js';
 import { analyzeAndCacheNormalize } from './normalize.js';
 
@@ -55,6 +55,8 @@ let stats = loadStats();
 let sessionActive = false;
 let sessionIndex = -1;
 let currentManualVolumeDb = 0; // Current manual volume adjustment in dB
+let sessionState = loadSessionState(); // Track played songs in current session
+let playedInCurrentSession = new Set(sessionState.playedInCurrentSession || []); // Set of track IDs played in current session
 
 /* Compatibility shim */
 const hasElectronApi = typeof window !== 'undefined' && window.api && typeof window.api.chooseDirectory === 'function';
@@ -168,6 +170,7 @@ function incrementSkipCount(track){ const s = ensureStatsForTrack(track); s.skip
 const BASE = 0.01;
 const SKIP_PENALTY = 2.0;
 const MIN_COMPLETION = 0.05;
+const COMPLETION_WEIGHT = 0.3; // Reduced from 1.0 to 0.3 to lower completion rate impact
 function computeWeightForTrack(track){
   const id = getTrackId(track);
   const s = stats[id] || { playCount:0, skipCount:0, sessionCount:0, completionSum:0 };
@@ -176,15 +179,37 @@ function computeWeightForTrack(track){
   const sessionCount = s.sessionCount || 0;
   const completionSum = s.completionSum || 0;
   const avgCompletion = sessionCount > 0 ? (completionSum / sessionCount) : MIN_COMPLETION;
+  
+  // Adjust completion factor: use weighted average between 1.0 and avgCompletion
+  // This reduces the impact of completion rate on the final weight
+  const completionFactor = 1.0 + (Math.max(avgCompletion, MIN_COMPLETION) - 1.0) * COMPLETION_WEIGHT;
+  
   const factor = (1 / (1 + playCount)) * (1 / (1 + skipCount * SKIP_PENALTY));
-  const w = (BASE + factor) * Math.max(avgCompletion, MIN_COMPLETION);
+  const w = (BASE + factor) * completionFactor;
   return w;
 }
 function generateWeightedOrder(startIndex = null){
   const indices = playlist.map((_,i)=>i);
-  const weights = indices.map(i => computeWeightForTrack(playlist[i]));
-  const idxs = indices.slice();
-  const ws = weights.slice();
+  
+  // Filter out tracks that have been played in current session
+  const availableIndices = indices.filter(i => {
+    const id = getTrackId(playlist[i]);
+    return !playedInCurrentSession.has(id);
+  });
+  
+  // If all tracks have been played, reset the session and use all tracks
+  let idxs, ws;
+  if (availableIndices.length === 0) {
+    logDebug('所有歌曲已播放一轮，重置播放会话');
+    playedInCurrentSession.clear();
+    saveSessionState({ playedInCurrentSession: [] });
+    idxs = indices.slice();
+    ws = indices.map(i => computeWeightForTrack(playlist[i]));
+  } else {
+    idxs = availableIndices.slice();
+    ws = availableIndices.map(i => computeWeightForTrack(playlist[i]));
+  }
+  
   const order = [];
   if (typeof startIndex === 'number' && startIndex >= 0){
     const pos = idxs.indexOf(startIndex);
@@ -304,6 +329,14 @@ async function loadTrack(idx){
   if (idx < 0 || idx >= playlist.length) return;
   currentIndex = idx;
   const item = playlist[idx];
+  
+  // Mark track as played in current session
+  const trackId = getTrackId(item);
+  if (!playedInCurrentSession.has(trackId)) {
+    playedInCurrentSession.add(trackId);
+    saveSessionState({ playedInCurrentSession: Array.from(playedInCurrentSession) });
+  }
+  
   if (item.path && hasElectronApi){
     audio.src = window.api.getFileUrl(item.path);
   } else if (item.fileHandle){
@@ -791,5 +824,15 @@ window.__player = {
   uiState,
   getShuffleState: () => ({isShuffle, playOrder: playOrder.slice(), orderPos}),
   getRepeatState: () => repeatOne,
+  getSessionState: () => ({
+    playedInCurrentSession: Array.from(playedInCurrentSession),
+    totalTracks: playlist.length,
+    remainingTracks: playlist.length - playedInCurrentSession.size
+  }),
+  resetSession: () => {
+    playedInCurrentSession.clear();
+    saveSessionState({ playedInCurrentSession: [] });
+    logDebug('播放会话已手动重置');
+  },
   regenerateShuffle: () => { if (playlist.length) { playOrder = generateWeightedOrder(currentIndex>=0?currentIndex:0); orderPos = Math.max(0, playOrder.indexOf(currentIndex>=0?currentIndex:playOrder[0])); logDebug('Regenerated playOrder'); renderPlaylist(); } }
 };

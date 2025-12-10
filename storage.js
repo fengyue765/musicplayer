@@ -72,3 +72,19 @@ export function saveUIState(uiState) {
     localStorage.setItem(UI_KEY, JSON.stringify(uiState));
   } catch (e) { console.error('saveUIState', e); }
 }
+
+// Session state (localStorage) - tracks which songs have been played in current session
+const SESSION_KEY = 'localPlayerSession_v1';
+export function loadSessionState() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : { playedInCurrentSession: [] };
+  } catch (e) {
+    return { playedInCurrentSession: [] };
+  }
+}
+export function saveSessionState(sessionState) {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
+  } catch (e) { console.error('saveSessionState', e); }
+}
