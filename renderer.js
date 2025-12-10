@@ -173,6 +173,8 @@ const MIN_COMPLETION = 0.05;
 const COMPLETION_WEIGHT = 0.3; // Reduce completion rate impact: only 30% of its deviation from baseline affects weight
 const FAVORITE_THRESHOLD = 3; // Songs with playCount >= this are considered for favorite bonus
 const FAVORITE_BONUS_WEIGHT = 0.5; // Bonus weight for verified favorites
+const FAVORITE_SKIP_RATE_THRESHOLD = 0.3; // Max skip rate (30%) for favorite qualification
+const FAVORITE_COMPLETION_THRESHOLD = 0.7; // Min completion rate (70%) for favorite qualification
 function computeWeightForTrack(track){
   const id = getTrackId(track);
   const s = stats[id] || { playCount:0, skipCount:0, sessionCount:0, completionSum:0 };
@@ -193,14 +195,14 @@ function computeWeightForTrack(track){
   // This rewards songs the user clearly enjoys (plays often, rarely skips, listens fully)
   let favoriteBonus = 0;
   if (playCount >= FAVORITE_THRESHOLD && sessionCount >= FAVORITE_THRESHOLD) {
-    const skipRate = skipCount / playCount; // Lower is better
+    const skipRate = skipCount / Math.max(1, playCount); // Lower is better, guard against division by zero
     const completionRate = avgCompletion; // Higher is better
     
-    // Song qualifies as "favorite" if: low skip rate (<0.3) AND high completion (>0.7)
-    if (skipRate < 0.3 && completionRate > 0.7) {
+    // Song qualifies as "favorite" if: low skip rate AND high completion
+    if (skipRate < FAVORITE_SKIP_RATE_THRESHOLD && completionRate > FAVORITE_COMPLETION_THRESHOLD) {
       // Bonus scales with how "favorite" it is: better stats = higher bonus
-      const skipQuality = Math.max(0, 1 - skipRate / 0.3); // 0 to 1, higher is better
-      const completionQuality = Math.min(1, (completionRate - 0.7) / 0.3); // 0 to 1, higher is better
+      const skipQuality = Math.max(0, 1 - skipRate / FAVORITE_SKIP_RATE_THRESHOLD); // 0 to 1, higher is better
+      const completionQuality = Math.min(1, (completionRate - FAVORITE_COMPLETION_THRESHOLD) / (1.0 - FAVORITE_COMPLETION_THRESHOLD)); // 0 to 1, higher is better
       favoriteBonus = FAVORITE_BONUS_WEIGHT * skipQuality * completionQuality;
     }
   }
