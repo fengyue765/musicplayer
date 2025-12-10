@@ -171,6 +171,8 @@ const BASE = 0.01;
 const SKIP_PENALTY = 2.0;
 const MIN_COMPLETION = 0.05;
 const COMPLETION_WEIGHT = 0.3; // Reduce completion rate impact: only 30% of its deviation from baseline affects weight
+const FAVORITE_THRESHOLD = 3; // Songs with playCount >= this are considered for favorite bonus
+const FAVORITE_BONUS_WEIGHT = 0.5; // Bonus weight for verified favorites
 function computeWeightForTrack(track){
   const id = getTrackId(track);
   const s = stats[id] || { playCount:0, skipCount:0, sessionCount:0, completionSum:0 };
@@ -184,8 +186,26 @@ function computeWeightForTrack(track){
   // This interpolation dampens the effect of avgCompletion on the final weight
   const completionFactor = 1.0 + (Math.max(avgCompletion, MIN_COMPLETION) - 1.0) * COMPLETION_WEIGHT;
   
+  // Base factor: low play count and low skip count = higher weight
   const factor = (1 / (1 + playCount)) * (1 / (1 + skipCount * SKIP_PENALTY));
-  const w = (BASE + factor) * completionFactor;
+  
+  // Favorite bonus: songs with high play count, low skip rate, and high completion get a bonus
+  // This rewards songs the user clearly enjoys (plays often, rarely skips, listens fully)
+  let favoriteBonus = 0;
+  if (playCount >= FAVORITE_THRESHOLD && sessionCount >= FAVORITE_THRESHOLD) {
+    const skipRate = skipCount / playCount; // Lower is better
+    const completionRate = avgCompletion; // Higher is better
+    
+    // Song qualifies as "favorite" if: low skip rate (<0.3) AND high completion (>0.7)
+    if (skipRate < 0.3 && completionRate > 0.7) {
+      // Bonus scales with how "favorite" it is: better stats = higher bonus
+      const skipQuality = Math.max(0, 1 - skipRate / 0.3); // 0 to 1, higher is better
+      const completionQuality = Math.min(1, (completionRate - 0.7) / 0.3); // 0 to 1, higher is better
+      favoriteBonus = FAVORITE_BONUS_WEIGHT * skipQuality * completionQuality;
+    }
+  }
+  
+  const w = (BASE + factor + favoriteBonus) * completionFactor;
   return w;
 }
 function generateWeightedOrder(startIndex = null){
