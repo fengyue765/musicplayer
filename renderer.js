@@ -175,10 +175,11 @@ const FAVORITE_BONUS_WEIGHT = 0.5; // Bonus weight for verified favorites
 const FAVORITE_SKIP_RATE_THRESHOLD = 0.3; // Max skip rate (30%) for favorite qualification
 const FAVORITE_COMPLETION_THRESHOLD = 0.7; // Min completion rate (70%) for favorite qualification
 const FAVORITE_PERCENTILE = 0.75; // Use 75th percentile of play counts as favorite threshold
+const DEFAULT_FAVORITE_THRESHOLD = 3; // Fallback threshold when playlist is empty
 
 // Calculate the 75th percentile of play counts across all tracks in playlist
 function calculateFavoriteThreshold(){
-  if (!playlist || playlist.length === 0) return 3; // Default fallback
+  if (!playlist || playlist.length === 0) return DEFAULT_FAVORITE_THRESHOLD;
   
   const playCounts = playlist.map(track => {
     const id = getTrackId(track);
@@ -186,10 +187,9 @@ function calculateFavoriteThreshold(){
     return s.playCount || 0;
   }).sort((a, b) => a - b); // Sort from low to high
   
-  if (playCounts.length === 0) return 3; // Fallback
-  
-  const percentileIndex = Math.floor(playCounts.length * FAVORITE_PERCENTILE);
-  const threshold = playCounts[Math.min(percentileIndex, playCounts.length - 1)];
+  // Calculate 75th percentile index (ceiling to handle non-exact percentiles)
+  const percentileIndex = Math.ceil(playCounts.length * FAVORITE_PERCENTILE) - 1;
+  const threshold = playCounts[Math.max(0, Math.min(percentileIndex, playCounts.length - 1))];
   
   // Ensure minimum threshold of 1 to avoid treating brand new songs as favorites
   return Math.max(1, threshold);
