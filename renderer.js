@@ -171,11 +171,31 @@ const BASE = 0.01;
 const SKIP_PENALTY = 2.0;
 const MIN_COMPLETION = 0.05;
 const COMPLETION_WEIGHT = 0.3; // Reduce completion rate impact: only 30% of its deviation from baseline affects weight
-const FAVORITE_THRESHOLD = 3; // Songs with playCount >= this are considered for favorite bonus
 const FAVORITE_BONUS_WEIGHT = 0.5; // Bonus weight for verified favorites
 const FAVORITE_SKIP_RATE_THRESHOLD = 0.3; // Max skip rate (30%) for favorite qualification
 const FAVORITE_COMPLETION_THRESHOLD = 0.7; // Min completion rate (70%) for favorite qualification
-function computeWeightForTrack(track){
+const FAVORITE_PERCENTILE = 0.75; // Use 75th percentile of play counts as favorite threshold
+
+// Calculate the 75th percentile of play counts across all tracks in playlist
+function calculateFavoriteThreshold(){
+  if (!playlist || playlist.length === 0) return 3; // Default fallback
+  
+  const playCounts = playlist.map(track => {
+    const id = getTrackId(track);
+    const s = stats[id] || { playCount: 0 };
+    return s.playCount || 0;
+  }).sort((a, b) => a - b); // Sort from low to high
+  
+  if (playCounts.length === 0) return 3; // Fallback
+  
+  const percentileIndex = Math.floor(playCounts.length * FAVORITE_PERCENTILE);
+  const threshold = playCounts[Math.min(percentileIndex, playCounts.length - 1)];
+  
+  // Ensure minimum threshold of 1 to avoid treating brand new songs as favorites
+  return Math.max(1, threshold);
+}
+
+function computeWeightForTrack(track, favoriteThreshold){
   const id = getTrackId(track);
   const s = stats[id] || { playCount:0, skipCount:0, sessionCount:0, completionSum:0 };
   const playCount = s.playCount || 0;
@@ -194,7 +214,7 @@ function computeWeightForTrack(track){
   // Favorite bonus: songs with high play count, low skip rate, and high completion get a bonus
   // This rewards songs the user clearly enjoys (plays often, rarely skips, listens fully)
   let favoriteBonus = 0;
-  if (playCount >= FAVORITE_THRESHOLD && sessionCount >= FAVORITE_THRESHOLD) {
+  if (playCount >= favoriteThreshold && sessionCount >= favoriteThreshold) {
     const skipRate = skipCount / Math.max(1, playCount); // Lower is better, guard against division by zero
     const completionRate = avgCompletion; // Higher is better
     
@@ -213,6 +233,9 @@ function computeWeightForTrack(track){
 function generateWeightedOrder(startIndex = null){
   const indices = playlist.map((_,i)=>i);
   
+  // Calculate dynamic favorite threshold based on 75th percentile of play counts
+  const favoriteThreshold = calculateFavoriteThreshold();
+  
   // Filter out tracks that have been played in current session
   const availableIndices = indices.filter(i => {
     const id = getTrackId(playlist[i]);
@@ -226,10 +249,10 @@ function generateWeightedOrder(startIndex = null){
     playedInCurrentSession.clear();
     saveSessionState({ playedInCurrentSession: [] });
     idxs = indices.slice();
-    ws = indices.map(i => computeWeightForTrack(playlist[i]));
+    ws = indices.map(i => computeWeightForTrack(playlist[i], favoriteThreshold));
   } else {
     idxs = availableIndices.slice();
-    ws = availableIndices.map(i => computeWeightForTrack(playlist[i]));
+    ws = availableIndices.map(i => computeWeightForTrack(playlist[i], favoriteThreshold));
   }
   
   const order = [];
@@ -851,6 +874,22 @@ window.__player = {
     totalTracks: playlist.length,
     remainingTracks: playlist.length - playedInCurrentSession.size
   }),
+  getFavoriteThreshold: () => {
+    const threshold = calculateFavoriteThreshold();
+    const playCounts = playlist.map(track => {
+      const id = getTrackId(track);
+      const s = stats[id] || { playCount: 0 };
+      return s.playCount || 0;
+    }).sort((a, b) => a - b);
+    const qualifyingCount = playCounts.filter(c => c >= threshold).length;
+    return {
+      threshold,
+      playCounts,
+      percentile: FAVORITE_PERCENTILE,
+      qualifyingSongs: qualifyingCount,
+      percentageQualifying: playlist.length ? (qualifyingCount / playlist.length * 100).toFixed(1) + '%' : '0%'
+    };
+  },
   resetSession: () => {
     playedInCurrentSession.clear();
     saveSessionState({ playedInCurrentSession: [] });
