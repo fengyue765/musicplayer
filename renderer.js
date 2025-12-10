@@ -170,7 +170,7 @@ function incrementSkipCount(track){ const s = ensureStatsForTrack(track); s.skip
 const BASE = 0.01;
 const SKIP_PENALTY = 2.0;
 const MIN_COMPLETION = 0.05;
-const COMPLETION_WEIGHT = 0.3; // Reduced from 1.0 to 0.3 to lower completion rate impact
+const COMPLETION_WEIGHT = 0.3; // Reduce completion rate impact: only 30% of its deviation from baseline affects weight
 function computeWeightForTrack(track){
   const id = getTrackId(track);
   const s = stats[id] || { playCount:0, skipCount:0, sessionCount:0, completionSum:0 };
@@ -180,8 +180,8 @@ function computeWeightForTrack(track){
   const completionSum = s.completionSum || 0;
   const avgCompletion = sessionCount > 0 ? (completionSum / sessionCount) : MIN_COMPLETION;
   
-  // Adjust completion factor: use weighted average between 1.0 and avgCompletion
-  // This reduces the impact of completion rate on the final weight
+  // Adjust completion factor: reduce impact by scaling deviation from baseline (1.0)
+  // This interpolation dampens the effect of avgCompletion on the final weight
   const completionFactor = 1.0 + (Math.max(avgCompletion, MIN_COMPLETION) - 1.0) * COMPLETION_WEIGHT;
   
   const factor = (1 / (1 + playCount)) * (1 / (1 + skipCount * SKIP_PENALTY));
